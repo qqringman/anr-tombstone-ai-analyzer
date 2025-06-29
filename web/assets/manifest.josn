@@ -1,0 +1,129 @@
+{
+  "name": "ANR/Tombstone AI 分析系統",
+  "short_name": "ANR分析",
+  "description": "使用先進的 AI 技術分析 Android 應用程式的 ANR 和 Tombstone 日誌",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f4f6",
+  "theme_color": "#2563eb",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "zh-TW",
+  "dir": "ltr",
+  "categories": ["developer", "productivity", "utilities"],
+  "iarc_rating_id": "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
+  "icons": [
+    {
+      "src": "/images/icon-72x72.png",
+      "sizes": "72x72",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/images/icon-96x96.png",
+      "sizes": "96x96",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/images/icon-128x128.png",
+      "sizes": "128x128",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/images/icon-144x144.png",
+      "sizes": "144x144",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/images/icon-152x152.png",
+      "sizes": "152x152",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/images/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/images/icon-384x384.png",
+      "sizes": "384x384",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/images/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/images/screenshot-1.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "label": "主要介面"
+    },
+    {
+      "src": "/images/screenshot-2.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "label": "分析結果"
+    },
+    {
+      "src": "/images/screenshot-3.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "label": "統計圖表"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "快速分析",
+      "short_name": "快速",
+      "description": "開始快速分析模式",
+      "url": "/?mode=quick",
+      "icons": [
+        {
+          "src": "/images/shortcut-quick.png",
+          "sizes": "96x96"
+        }
+      ]
+    },
+    {
+      "name": "深度分析",
+      "short_name": "深度",
+      "description": "開始深度分析模式",
+      "url": "/?mode=max_token",
+      "icons": [
+        {
+          "src": "/images/shortcut-deep.png",
+          "sizes": "96x96"
+        }
+      ]
+    }
+  ],
+  "share_target": {
+    "action": "/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "log",
+          "accept": [".txt", ".log", "text/*"]
+        }
+      ]
+    }
+  },
+  "prefer_related_applications": false,
+  "related_applications": []
+}

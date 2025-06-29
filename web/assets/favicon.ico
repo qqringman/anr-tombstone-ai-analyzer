@@ -1,0 +1,174 @@
+# Favicon 和圖示資源說明
+
+## favicon.ico
+
+網站圖示檔案，應該包含多個尺寸的圖示：
+- 16x16
+- 32x32
+- 48x48
+
+### 建議設計
+
+**主題**：結合 Android 機器人和 AI 分析的概念
+
+**設計元素**：
+1. 簡化的 Android 機器人頭部輪廓
+2. 內嵌分析圖表符號（如折線圖）
+3. 使用品牌主色 #2563eb（藍色）
+
+### 生成方法
+
+1. **使用線上工具**：
+   - https://favicon.io/
+   - https://realfavicongenerator.net/
+
+2. **使用設計軟體**：
+   - 創建 512x512 的 SVG 或 PNG
+   - 導出不同尺寸
+   - 使用工具轉換為 .ico 格式
+
+3. **命令行工具**（需要 ImageMagick）：
+   ```bash
+   convert icon-16.png icon-32.png icon-48.png favicon.ico
+   ```
+
+## 其他圖示資源
+
+根據 manifest.json，還需要以下圖示：
+
+### PWA 圖示（/images/ 目錄）
+
+```
+images/
+├── icon-72x72.png
+├── icon-96x96.png
+├── icon-128x128.png
+├── icon-144x144.png
+├── icon-152x152.png
+├── icon-192x192.png
+├── icon-384x384.png
+├── icon-512x512.png
+├── shortcut-quick.png (96x96)
+├── shortcut-deep.png (96x96)
+├── screenshot-1.png (1280x720)
+├── screenshot-2.png (1280x720)
+└── screenshot-3.png (1280x720)
+```
+
+### 圖示設計規範
+
+**主圖示設計**：
+- 背景：白色或透明
+- 主體：藍色 (#2563eb) Android 機器人
+- 輔助元素：圖表線條或 AI 符號
+- 留白：圖示周圍保留 10% 的留白
+
+**快捷方式圖示**：
+- `shortcut-quick.png`：閃電符號，表示快速
+- `shortcut-deep.png`：放大鏡或齒輪，表示深度分析
+
+### SVG 原始檔案範例
+
+創建 `web/images/logo.svg`：
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Android 機器人頭部 -->
+  <path d="M256 128c-70.7 0-128 57.3-128 128s57.3 128 128 128 128-57.3 128-128-57.3-128-128-128z" 
+        fill="#2563eb"/>
+  
+  <!-- 眼睛 -->
+  <circle cx="200" cy="240" r="16" fill="#fff"/>
+  <circle cx="312" cy="240" r="16" fill="#fff"/>
+  
+  <!-- 分析圖表 -->
+  <path d="M180 300 L220 280 L260 290 L300 270 L340 280" 
+        stroke="#fff" 
+        stroke-width="8" 
+        fill="none"
+        stroke-linecap="round"
+        stroke-linejoin="round"/>
+  
+  <!-- 天線 -->
+  <line x1="220" y1="128" x2="200" y2="80" 
+        stroke="#2563eb" 
+        stroke-width="8" 
+        stroke-linecap="round"/>
+  <line x1="292" y1="128" x2="312" y2="80" 
+        stroke="#2563eb" 
+        stroke-width="8" 
+        stroke-linecap="round"/>
+</svg>
+```
+
+### 生成腳本
+
+創建 `scripts/generate-icons.sh`：
+
+```bash
+#!/bin/bash
+
+# 需要 ImageMagick
+# brew install imagemagick (macOS)
+# apt-get install imagemagick (Ubuntu)
+
+# 源檔案
+SOURCE="web/images/logo.svg"
+OUTPUT_DIR="web/images"
+
+# 創建目錄
+mkdir -p $OUTPUT_DIR
+
+# 生成不同尺寸的 PNG
+for size in 72 96 128 144 152 192 384 512; do
+    convert -background transparent -resize ${size}x${size} $SOURCE $OUTPUT_DIR/icon-${size}x${size}.png
+done
+
+# 生成 favicon.ico
+convert -background transparent \
+    $OUTPUT_DIR/icon-16x16.png \
+    $OUTPUT_DIR/icon-32x32.png \
+    $OUTPUT_DIR/icon-48x48.png \
+    web/favicon.ico
+
+echo "圖示生成完成！"
+```
+
+### 應用圖示到 HTML
+
+在 `index.html` 的 `<head>` 中添加：
+
+```html
+<!-- Favicon -->
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="/images/icon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/images/icon-16x16.png">
+
+<!-- Apple Touch Icon -->
+<link rel="apple-touch-icon" sizes="180x180" href="/images/icon-180x180.png">
+
+<!-- PWA -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#2563eb">
+
+<!-- Open Graph -->
+<meta property="og:image" content="/images/icon-512x512.png">
+```
+
+## 品牌指南
+
+為保持一致性，所有圖示應遵循：
+
+1. **顏色**：
+   - 主色：#2563eb（藍色）
+   - 輔色：#10b981（綠色）
+   - 背景：#ffffff 或透明
+
+2. **風格**：
+   - 簡潔的線條
+   - 圓角設計
+   - 適當的留白
+
+3. **可識別性**：
+   - 即使在小尺寸也清晰可見
+   - 與 Android 和 AI 分析相關聯
