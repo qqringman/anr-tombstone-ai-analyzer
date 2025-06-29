@@ -1,11 +1,158 @@
------ pid 12345 at 2024-01-15 10:30:45 -----
-Cmd line: com.example.app
-ABI: 'arm64'
+Subject: Input dispatching timed out (2511b15 com.google.android.apps.tv.launcherx/com.google.android.apps.tv.launcherx.home.HomeActivity (server) is not responding. Waited 5000ms for FocusEvent(hasFocus=true))
+RssHwmKb: 440092
+RssKb: 379552
+RssAnonKb: 286052
+RssShmemKb: 932
+VmSwapKb: 82880
 
-"main" prio=5 tid=1 Blocked
-  | group="main" sCount=1 dsCount=0 flags=1
-  | state=S schedstat=( 0 0 0 ) utm=0 stm=0 core=0 HZ=100
-  at android.os.MessageQueue.nativePollOnce(Native Method)
-  at android.os.MessageQueue.next(MessageQueue.java:336)
-  at android.os.Looper.loop(Looper.java:174)
-  at android.app.ActivityThread.main(ActivityThread.java:7356)
+
+--- CriticalEventLog ---
+capacity: 20
+timestamp_ms: 1750698175846
+window_ms: 300000
+
+----- dumping pid: 1705 at 11006499
+
+----- pid 1705 at 2025-06-24 01:02:55.783306276+0800 -----
+Cmd line: com.google.android.apps.tv.launcherx
+Build fingerprint: 'FPD/FPD_4KHI1/kipling:14/UKR9.250613.002/488:userdebug/test-keys'
+ABI: 'arm'
+Build type: optimized
+suspend all histogram:	Sum: 213.589ms 99% C.I. 6us-5614.079us Avg: 151.804us Max: 21514us
+DALVIK THREADS (86):
+"main" prio=5 tid=1 Native
+  | group="main" sCount=1 ucsCount=0 flags=1 obj=0x72c6e2b8 self=0x99906210
+  | sysTid=1705 nice=-10 cgrp=top-app sched=0/0 handle=0xa1e0446c
+  | state=S schedstat=( 473294605926 232521222597 1251689 ) utm=36810 stm=10519 core=3 HZ=100
+  | stack=0xae093000-0xae095000 stackSize=8188KB
+  | held mutexes=
+  native: #00 pc 00085e64  /apex/com.android.runtime/lib/bionic/libc.so (__ioctl+12) (BuildId: b509a38a7ac8e17e525d6db212b08d06)
+  native: #01 pc 00051a3b  /apex/com.android.runtime/lib/bionic/libc.so (ioctl+26) (BuildId: b509a38a7ac8e17e525d6db212b08d06)
+  native: #02 pc 0004eb23  /system/lib/libbinder.so (android::IPCThreadState::talkWithDriver+214) (BuildId: a3e67613cc7468a240a4f0a23b9b84b1)
+  native: #03 pc 0004f9c9  /system/lib/libbinder.so (android::IPCThreadState::waitForResponse+32) (BuildId: a3e67613cc7468a240a4f0a23b9b84b1)
+  native: #04 pc 0004f773  /system/lib/libbinder.so (android::IPCThreadState::transact+134) (BuildId: a3e67613cc7468a240a4f0a23b9b84b1)
+  native: #05 pc 00060007  /system/lib/libbinder.so (android::BpBinder::transact+114) (BuildId: a3e67613cc7468a240a4f0a23b9b84b1)
+  native: #06 pc 001118d9  /system/lib/libandroid_runtime.so (android_os_BinderProxy_transact+84) (BuildId: 2d9a3a547710bd32c6c9c17e1300d398)
+  at android.os.BinderProxy.transactNative(Native method)
+  at android.os.BinderProxy.transact(BinderProxy.java:584)
+  at android.view.IWindowManager$Stub$Proxy.getWindowInsets(IWindowManager.java:5317)
+  at android.window.WindowMetricsController.getWindowInsetsFromServerForDisplay(WindowMetricsController.java:116)
+  at android.window.WindowMetricsController.lambda$getWindowMetricsInternal$0(WindowMetricsController.java:96)
+  at android.window.WindowMetricsController.$r8$lambda$pFTaIba9cW7oBONGFT2xxYPhXLc(unavailable:0)
+  at android.window.WindowMetricsController$$ExternalSyntheticLambda0.get(D8$$SyntheticClass:0)
+  at android.view.WindowMetrics.getWindowInsets(WindowMetrics.java:145)
+  at WV.MN.c(chromium-TrichromeWebViewGoogle.aab-stable-715111530:1)
+  at WV.QN.e(chromium-TrichromeWebViewGoogle.aab-stable-715111530:32)
+  at WV.QN.f(chromium-TrichromeWebViewGoogle.aab-stable-715111530:5)
+  at WV.El.onDisplayChanged(chromium-TrichromeWebViewGoogle.aab-stable-715111530:29)
+  at android.hardware.display.DisplayManagerGlobal$DisplayListenerDelegate.handleMessage(DisplayManagerGlobal.java:1163)
+  at android.hardware.display.DisplayManagerGlobal$DisplayListenerDelegate.lambda$sendDisplayEvent$0(DisplayManagerGlobal.java:1131)
+  at android.hardware.display.DisplayManagerGlobal$DisplayListenerDelegate.$r8$lambda$RCVQY6UK_MpVw4zlID6IjI5RcgM(unavailable:0)
+  at android.hardware.display.DisplayManagerGlobal$DisplayListenerDelegate$$ExternalSyntheticLambda0.run(D8$$SyntheticClass:0)
+  at android.os.Handler.handleCallback(Handler.java:958)
+  at android.os.Handler.dispatchMessage(Handler.java:99)
+  at android.os.Looper.loopOnce(Looper.java:205)
+  at android.os.Looper.loop(Looper.java:294)
+  at android.app.ActivityThread.main(ActivityThread.java:8177)
+  at java.lang.reflect.Method.invoke(Native method)
+  at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:552)
+  at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:971)
+
+"glide-active-resources" prio=5 tid=6 Waiting
+  | group="main" sCount=1 ucsCount=0 flags=1 obj=0x12d34cd8 self=0x99913410
+  | sysTid=2209 nice=10 cgrp=top-app sched=0/0 handle=0x8f4d01c0
+  | state=S schedstat=( 17638964 187944261 326 ) utm=0 stm=0 core=2 HZ=100
+  | stack=0x8f3cd000-0x8f3cf000 stackSize=1036KB
+  | held mutexes=
+  at java.lang.Object.wait(Native method)
+  - waiting on <0x036d6d36> (a java.lang.Object)
+  at java.lang.Object.wait(Object.java:386)
+  at java.lang.ref.ReferenceQueue.remove(ReferenceQueue.java:210)
+  - locked <0x036d6d36> (a java.lang.Object)
+  at java.lang.ref.ReferenceQueue.remove(ReferenceQueue.java:231)
+  at cad.run(PG:41)
+  at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+  at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+  at cad.run(PG:73)
+  at java.lang.Thread.run(Thread.java:1012)
+
+"FinalizerWatchdogDaemon" daemon prio=5 tid=10 Sleeping
+  | group="system" sCount=1 ucsCount=0 flags=1 obj=0x12c00720 self=0x9990e010
+  | sysTid=1718 nice=4 cgrp=top-app sched=0/0 handle=0x6e6e11c0
+  | state=S schedstat=( 89894781 258054354 1332 ) utm=3 stm=5 core=0 HZ=100
+  | stack=0x6e5de000-0x6e5e0000 stackSize=1036KB
+  | held mutexes=
+  at java.lang.Thread.sleep(Native method)
+  - sleeping on <0x05b5ea82> (a java.lang.Object)
+  at java.lang.Thread.sleep(Thread.java:450)
+  - locked <0x05b5ea82> (a java.lang.Object)
+  at java.lang.Thread.sleep(Thread.java:355)
+  at java.lang.Daemons$FinalizerWatchdogDaemon.sleepForNanos(Daemons.java:481)
+  at java.lang.Daemons$FinalizerWatchdogDaemon.waitForProgress(Daemons.java:527)
+  at java.lang.Daemons$FinalizerWatchdogDaemon.runInternal(Daemons.java:412)
+  at java.lang.Daemons$Daemon.run(Daemons.java:145)
+  at java.lang.Thread.run(Thread.java:1012)
+
+"ReferenceQueueDaemon" daemon prio=5 tid=11 Waiting
+  | group="system" sCount=1 ucsCount=0 flags=1 obj=0x12c00600 self=0x9990b610
+  | sysTid=1716 nice=4 cgrp=top-app sched=0/0 handle=0x6e8f31c0
+  | state=S schedstat=( 5911790649 6263886010 12363 ) utm=335 stm=256 core=2 HZ=100
+  | stack=0x6e7f0000-0x6e7f2000 stackSize=1036KB
+  | held mutexes=
+  at java.lang.Object.wait(Native method)
+  - waiting on <0x0f88b2e8> (a java.lang.Class<java.lang.ref.ReferenceQueue>)
+  at java.lang.Object.wait(Object.java:386)
+  at java.lang.Object.wait(Object.java:524)
+  at java.lang.Daemons$ReferenceQueueDaemon.runInternal(Daemons.java:239)
+  - locked <0x0f88b2e8> (a java.lang.Class<java.lang.ref.ReferenceQueue>)
+  at java.lang.Daemons$Daemon.run(Daemons.java:145)
+  at java.lang.Thread.run(Thread.java:1012)
+
+"FinalizerDaemon" daemon prio=5 tid=14 Waiting
+  | group="system" sCount=1 ucsCount=0 flags=1 obj=0x12c00690 self=0x99907e10
+  | sysTid=1717 nice=4 cgrp=top-app sched=0/0 handle=0x6e7ea1c0
+  | state=S schedstat=( 3788487146 2684784995 6989 ) utm=245 stm=133 core=0 HZ=100
+  | stack=0x6e6e7000-0x6e6e9000 stackSize=1036KB
+  | held mutexes=
+  at java.lang.Object.wait(Native method)
+  - waiting on <0x09daeaad> (a java.lang.Object)
+  at java.lang.Object.wait(Object.java:386)
+  at java.lang.ref.ReferenceQueue.remove(ReferenceQueue.java:210)
+  - locked <0x09daeaad> (a java.lang.Object)
+  at java.lang.ref.ReferenceQueue.remove(ReferenceQueue.java:231)
+  at java.lang.Daemons$FinalizerDaemon.runInternal(Daemons.java:309)
+  at java.lang.Daemons$Daemon.run(Daemons.java:145)
+  at java.lang.Thread.run(Thread.java:1012)
+
+"Blocking Thread #0" daemon prio=4 tid=17 Waiting
+  | group="main" sCount=1 ucsCount=0 flags=1 obj=0x12c27998 self=0x99910a10
+  | sysTid=1885 nice=0 cgrp=top-app sched=0/0 handle=0x95d491c0
+  | state=S schedstat=( 598403722 356874775 1690 ) utm=51 stm=8 core=3 HZ=100
+  | stack=0x95c46000-0x95c48000 stackSize=1036KB
+  | held mutexes=
+  at java.lang.Object.wait(Native method)
+  - waiting on <0x0ea22a2e> (a java.lang.Object)
+  at java.lang.Object.wait(Object.java:386)
+  at java.lang.ref.ReferenceQueue.remove(ReferenceQueue.java:210)
+  - locked <0x0ea22a2e> (a java.lang.Object)
+  at java.lang.ref.ReferenceQueue.remove(ReferenceQueue.java:231)
+  at vew.run(PG:182)
+  at nww.run(PG:7)
+  at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+  at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+  at ntc.run(PG:218)
+  at java.lang.Thread.run(Thread.java:1012)
+  at nyo.run(PG:62)
+
+"GmsDynamite" prio=5 tid=46 Waiting
+  | group="dynamiteLoader" sCount=1 ucsCount=0 flags=1 obj=0x12d7cec0 self=0x9992a010
+  | sysTid=2250 nice=19 cgrp=top-app sched=0/0 handle=0x8f1b51c0
+  | state=S schedstat=( 343962 38702852 3 ) utm=0 stm=0 core=0 HZ=100
+  | stack=0x8f0b2000-0x8f0b4000 stackSize=1036KB
+  | held mutexes=
+  at java.lang.Object.wait(Native method)
+  - waiting on <0x0aa22437> (a nmb)
+  at java.lang.Object.wait(Object.java:386)
+  at java.lang.Object.wait(Object.java:524)
+  at nmb.run(PG:7)
+  - locked <0x0aa22437> (a nmb)

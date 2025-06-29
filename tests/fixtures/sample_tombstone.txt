@@ -1,0 +1,71 @@
+*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+Build fingerprint: 'google/coral/coral:11/RP1A.201005.004/6782484:user/release-keys'
+Revision: '0'
+ABI: 'arm64'
+Timestamp: 2024-01-15 10:30:45+0800
+pid: 12345, tid: 12345, name: example.app  >>> com.example.app <<<
+uid: 10234
+signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0
+Cause: null pointer dereference
+    x0  0000000000000000  x1  0000007fd8f9e5a0  x2  0000000000000010  x3  0000000000000000
+    x4  0000007fd8f9e5b0  x5  0000000000000000  x6  0000000000000000  x7  0000000000000000
+    x8  0000000000000000  x9  0000000000000000  x10 0000000000000000  x11 0000000000000000
+    x12 0000000000000000  x13 0000000000000000  x14 0000000000000000  x15 0000000000000000
+    x16 00000074c6a91ed0  x17 00000074c6a7f8bc  x18 00000073f8efe000  x19 0000007fd8f9e7a0
+    x20 0000000000000000  x21 0000000000000000  x22 0000000000000000  x23 0000000000000000
+    x24 0000000000000000  x25 0000000000000000  x26 0000000000000000  x27 0000000000000000
+    x28 0000000000000000  x29 0000007fd8f9e590
+    lr  00000074b8a1234c  sp  0000007fd8f9e590  pc  00000074c6a7f8c8  pst 0000000060000000
+
+backtrace:
+      #00 pc 000000000006d4f8  /system/lib64/libc.so (strlen+12) (BuildId: 2f5c1d3e72e942e58e84a9e6aa6ac919)
+      #01 pc 00000000000a1234  /data/app/~~xyzabc123==/com.example.app-randomID==/lib/arm64/libnative.so
+      #02 pc 000000000001e456  /data/app/~~xyzabc123==/com.example.app-randomID==/lib/arm64/libnative.so (Java_com_example_app_NativeLib_processString+42)
+      #03 pc 00000000001357f8  /apex/com.android.art/lib64/libart.so (art_quick_generic_jni_trampoline+152) (BuildId: 4e9e3dbb0fe1234567890abc)
+      #04 pc 000000000012c4d4  /apex/com.android.art/lib64/libart.so (art_quick_invoke_stub+548) (BuildId: 4e9e3dbb0fe1234567890abc)
+      #05 pc 00000000001a8a78  /apex/com.android.art/lib64/libart.so (art::ArtMethod::Invoke(art::Thread*, unsigned int*, unsigned int, art::JValue*, char const*)+200) (BuildId: 4e9e3dbb0fe1234567890abc)
+      #06 pc 0000000000318390  /apex/com.android.art/lib64/libart.so (art::interpreter::ArtInterpreterToCompiledCodeBridge(art::Thread*, art::ArtMethod*, art::ShadowFrame*, unsigned short, art::JValue*)+376) (BuildId: 4e9e3dbb0fe1234567890abc)
+      #07 pc 000000000030f4bc  /apex/com.android.art/lib64/libart.so (bool art::interpreter::DoCall<false, false>(art::ArtMethod*, art::Thread*, art::ShadowFrame&, art::Instruction const*, unsigned short, art::JValue*)+968) (BuildId: 4e9e3dbb0fe1234567890abc)
+      #08 pc 00000000006848f0  /apex/com.android.art/lib64/libart.so (MterpInvokeVirtual+848) (BuildId: 4e9e3dbb0fe1234567890abc)
+      #09 pc 000000000012d814  /apex/com.android.art/lib64/libart.so (mterp_op_invoke_virtual+20) (BuildId: 4e9e3dbb0fe1234567890abc)
+      #10 pc 00000000001234c8  /system/framework/framework.jar (offset 0x92a000) (com.example.app.MainActivity.processUserInput [DEDUPED])
+      #11 pc 0000000000685ea4  /apex/com.android.art/lib64/libart.so (MterpInvokeVirtual+1812) (BuildId: 4e9e3dbb0fe1234567890abc)
+
+stack:
+         0000007fd8f9e550  0000000000000000
+         0000007fd8f9e558  0000000000000000
+         0000007fd8f9e560  0000000000000000
+         0000007fd8f9e568  0000000000000000
+         0000007fd8f9e570  0000000000000000
+         0000007fd8f9e578  0000000000000000
+         0000007fd8f9e580  0000000000000000
+         0000007fd8f9e588  00000074b8a1234c  /data/app/~~xyzabc123==/com.example.app-randomID==/lib/arm64/libnative.so
+         0000007fd8f9e590  0000000000000000
+         0000007fd8f9e598  0000000000000000
+         0000007fd8f9e5a0  4a76612065736f70  'Java_com_'
+         0000007fd8f9e5a8  5f6d6f635f617661  'example_a'
+         0000007fd8f9e5b0  0000007fd8f9e7a0
+         0000007fd8f9e5b8  00000074b8a1e456  /data/app/~~xyzabc123==/com.example.app-randomID==/lib/arm64/libnative.so
+
+memory near x1 ([anon:stack_and_tls:12345]):
+    0000007fd8f9e580  0000000000000000 00000074b8a1234c  ........L#......
+    0000007fd8f9e590  0000000000000000 0000000000000000  ................
+    0000007fd8f9e5a0  4a76612065736f70 5f6d6f635f617661  pose avaJava_com
+    0000007fd8f9e5b0  0000007fd8f9e7a0 00000074b8a1e456  ........V.......
+
+code around pc ([anon:linker_alloc]):
+    00000074c6a7f8a8  d10043ff910003fd f94003e8d2800000  ..C.............
+    00000074c6a7f8b8  aa1f03e0f9400108 aa0803e0d63f0100  ......@......?..
+    00000074c6a7f8c8  39400008350000a8 910003e1f9400108  ..@9...5......@.
+    00000074c6a7f8d8  aa0803e0d63f0100 394000083500004
+
+code around lr ([anon:linker_alloc]):
+    00000074b8a1232c  f94013e8910043e0 f9000be8f94017e8  .....C..........
+    00000074b8a1233c  f9400be9f9000fe8 9100c3e8910043e0  .....C..........
+    00000074b8a1234c  97ffcba894000008 350000c8aa0003f3  ...........5....
+    00000074b8a1235c  aa1303e097ffcc9a a8c27bfd910083ff  .........{......
+
+memory map (138 entries):
+    ...
+    
+Tombstone written to: /data/tombstones/tombstone_12
