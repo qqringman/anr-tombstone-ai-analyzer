@@ -8,8 +8,6 @@ from unittest.mock import Mock, AsyncMock, patch
 from flask import Flask
 
 from api.app import create_app
-from config.base import AnalysisMode, ModelProvider
-
 
 class TestAPIEndpoints:
     """Test API endpoint integration"""

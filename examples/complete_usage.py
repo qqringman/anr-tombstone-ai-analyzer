@@ -3,8 +3,7 @@
 """
 import asyncio
 from src.core.engine import AiAnalysisEngine
-from src.models import AnalysisMode, ModelProvider
-
+from src.analyzers.base import BaseApiConfig, ModelConfig, AnalysisMode,ModelProvider
 
 async def complete_example():
     """完整的使用範例"""

@@ -11,7 +11,6 @@ from analyzers.anr.openai import OpenApiStreamingANRAnalyzer
 from analyzers.tombstone.anthropic import AnthropicApiStreamingTombstoneAnalyzer
 from analyzers.tombstone.openai import OpenApiStreamingTombstoneAnalyzer
 
-
 class TestAnthropicANRAnalyzer:
     """Test Anthropic ANR analyzer"""
     

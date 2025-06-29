@@ -5,7 +5,6 @@ import os
 import json
 import hashlib
 import pickle
-import aiofiles
 from pathlib import Path
 from typing import Optional, Any, Dict, List
 from datetime import datetime, timedelta
@@ -104,7 +103,7 @@ class CacheManager:
             # 檢查磁碟快取
             file_path = self._get_file_path(key)
             if file_path.exists():
-                async with aiofiles.open(file_path, 'rb') as f:
+                async with open(file_path, 'rb') as f:
                     data = await f.read()
                     entry = pickle.loads(data)
                 
@@ -147,7 +146,7 @@ class CacheManager:
             
             # 存入磁碟快取
             file_path = self._get_file_path(key)
-            async with aiofiles.open(file_path, 'wb') as f:
+            async with open(file_path, 'wb') as f:
                 await f.write(pickle.dumps(entry))
                 
         except Exception as e:
@@ -198,7 +197,7 @@ class CacheManager:
         # 清理磁碟快取
         for cache_file in self.cache_dir.rglob("*.cache"):
             try:
-                async with aiofiles.open(cache_file, 'rb') as f:
+                async with open(cache_file, 'rb') as f:
                     data = await f.read()
                     entry = pickle.loads(data)
                 
@@ -244,7 +243,7 @@ class CacheManager:
                     continue
                 
                 # 載入快取項目
-                async with aiofiles.open(cache_file, 'rb') as f:
+                async with open(cache_file, 'rb') as f:
                     data = await f.read()
                     entry = pickle.loads(data)
                 
