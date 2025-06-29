@@ -69,7 +69,7 @@ case $mode in
         
         echo -e "\n${GREEN}啟動網頁服務器...${NC}"
         cd web
-        python3 -m http.server 5000 &
+        python3 -m http.server 5566 &
         WEB_PID=$!
         cd ..
         
@@ -80,7 +80,7 @@ case $mode in
         echo "=========================================="
         echo ""
         echo "API 服務器: http://localhost:5000"
-        echo "網頁介面: http://localhost:5000"
+        echo "網頁介面: http://localhost:5566"
         echo ""
         echo "API 健康檢查: http://localhost:5000/api/health"
         echo "API 文檔: http://localhost:5000/api/docs"
@@ -193,6 +193,7 @@ case $mode in
         echo "API 服務: http://localhost:5000"
         echo ""
         echo "停止 Gunicorn: pkill gunicorn"
+		echo "停止 nginx: sudo systemctl stop nginx"
         echo -e "==========================================${NC}"
         ;;
         
