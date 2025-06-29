@@ -1297,7 +1297,7 @@
                 const response = await fetch('/api/health');
                 const data = await response.json();
                 
-                if (data.overall.status === 'healthy') {
+                if (data.status === 'healthy') {
                     addStatusLog('系統狀態正常', 'info');
                 } else {
                     addStatusLog('系統狀態異常', 'warning');

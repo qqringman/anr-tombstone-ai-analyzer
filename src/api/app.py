@@ -6,6 +6,7 @@ ANR/Tombstone AI 分析系統 - Flask 應用程式
 import os
 import sys
 from pathlib import Path
+from flask_cors import CORS
 
 # 將專案根目錄加入 Python 路徑
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -19,6 +20,12 @@ from datetime import datetime
 # 創建 Flask 應用
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+host = os.getenv('API_HOST', '0.0.0.0')
+port = int(os.getenv('API_PORT', 5000))
+host = 'localhost' if host == '0.0.0.0' else host
+dynamic_origin = f"http://{host}:{port}"
+CORS(app, resources={r"/api/*": {"origins": [dynamic_origin]}})
 
 app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024  # 20MB
 

@@ -1,11 +1,13 @@
-version: '3.8'
-
 services:
+  # 您的應用程式服務
   app:
-    build: .
+    build: .  # 假設您的 Flask 應用程式 Dockerfile 在 . 目錄
     ports:
+      # **關鍵改變：將容器內部 5000 埠映射到主機的 5000 埠**
+      # 這樣主機上的 Nginx 才能透過 localhost:5000 訪問它
       - "5000:5000"
     environment:
+      # 假設的環境變數，根據您的 app 實際需求配置
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - DATABASE_URL=postgresql://analyzer:${DB_PASSWORD}@postgres:5432/ai_analyzer
@@ -35,16 +37,20 @@ services:
       - redis_data:/data
     restart: unless-stopped
 
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
-      - ./web:/usr/share/nginx/html
-    depends_on:
-      - app
-    restart: unless-stopped
+  # 在這種模式下，docker-compose.yml 中通常不會包含 Nginx 服務，
+  # 因為它運行在主機上。
+  # 您可以從這裡移除 Nginx 服務，或只保留其他容器。
+  # 但為了完整性，這裡假定 Nginx 仍在主機上運行。
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/conf.d/default.conf
+  #     - ./web:/usr/share/nginx/html
+  #   depends_on:
+  #     - app
+  #   restart: unless-stopped
 
 volumes:
   postgres_data:

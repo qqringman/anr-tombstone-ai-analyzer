@@ -66,50 +66,129 @@ case $mode in
 
         # 設定開發環境
         export ENVIRONMENT=development
-        
+
         # 使用 .env 中的埠號，如果沒有設定則使用預設值
-        API_PORT=${API_PORT:-5000} # 如果 .env 中沒有設定 API_PORT，則預設為 5000
-        WEB_PORT=${WEB_PORT:-5566} # 如果 .env 中沒有設定 WEB_PORT，則預設為 5566
+        API_PORT=${API_PORT:-5000}
+
+        # 檢查並更新 Nginx 配置
+        echo -e "\n${GREEN}檢查 Nginx 配置...${NC}"
+        CURRENT_DIR=$(pwd)
+
+        # 檢查配置文件是否需要更新
+        if [ ! -f "/etc/nginx/sites-available/anr-analyzer" ] || [ "nginx.conf" -nt "/etc/nginx/sites-available/anr-analyzer" ]; then
+            echo "更新 Nginx 配置..."
+            sudo cp nginx.conf /etc/nginx/sites-available/anr-analyzer
+            sudo ln -sf /etc/nginx/sites-available/anr-analyzer /etc/nginx/sites-enabled/
+            
+            # 更新配置中的路徑
+            sudo sed -i "s|root /usr/share/nginx/html;|root $CURRENT_DIR/web;|g" /etc/nginx/sites-available/anr-analyzer
+            
+            # 如果有預設站點，可能需要禁用它避免衝突
+            if [ -f "/etc/nginx/sites-enabled/default" ]; then
+                echo "禁用預設站點..."
+                sudo rm -f /etc/nginx/sites-enabled/default
+            fi
+            
+            # 測試 Nginx 配置
+            echo "測試 Nginx 配置..."
+            if sudo nginx -t; then
+                echo "✅ Nginx 配置正確"
+                
+                # 檢查 Nginx 狀態並採取適當行動
+                if systemctl is-active --quiet nginx; then
+                    echo "重載 Nginx..."
+                    sudo systemctl reload nginx
+                else
+                    echo "啟動 Nginx..."
+                    sudo systemctl start nginx
+                fi
+            else
+                echo "❌ Nginx 配置錯誤，請檢查配置文件"
+                exit 1
+            fi
+        else
+            echo "✅ Nginx 配置已是最新"
+        fi
+
+        # 確保 Nginx 正在運行
+        if ! pgrep -x "nginx" > /dev/null; then
+            echo -e "${YELLOW}啟動 Nginx...${NC}"
+            sudo systemctl start nginx || sudo nginx
+        fi
+
+		# 測試 Nginx 配置，確保沒有語法錯誤
+		echo "測試 Nginx 配置..."
+		sudo nginx -t
+
+		# 檢查 Nginx 服務狀態，如果沒運行就啟動，否則重新載入
+		echo "管理 Nginx 服務..."
+		if systemctl is-active --quiet nginx; then
+			echo "Nginx 正在運行，重新載入配置..."
+			sudo systemctl reload nginx
+		else
+			echo "Nginx 未運行，啟動 Nginx 服務..."
+			sudo systemctl start nginx
+		fi
         
-		# 這裡使用 lsof 檢查並殺死占用埠號的進程，然後啟動新的服務
-		sudo kill -9 $(sudo lsof -t -i :$API_PORT) 2>/dev/null || true # 2>/dev/null || true 防止錯誤輸出中斷腳本
-        sudo kill -9 $(sudo lsof -t -i :$WEB_PORT) 2>/dev/null || true # 2>/dev/null || true 防止錯誤輸出中斷腳本
-		
-        # 啟動服務
+        # 殺死占用 API 埠號的進程
+        echo -e "\n${GREEN}停止舊的 API 服務...${NC}"
+        sudo kill -9 $(sudo lsof -t -i :$API_PORT) 2>/dev/null || true
+
+        # 啟動 API 服務
         echo -e "\n${GREEN}啟動 API 服務器 (埠號: $API_PORT)...${NC}"
-        # 這裡假設你的 API 服務器程式碼會讀取環境變數或以參數形式接收埠號
-        # 如果你的 Python API 服務器需要明確傳遞埠號，你需要調整啟動命令
-        # 例如：python -m src.api.app --port $API_PORT
-        # 如果你的 Python 服務器會自動讀取環境變數，則無需額外修改
         python -m src.api.app &
         API_PID=$!
         echo "API PID: $API_PID"
-        sleep 2
-        
-        echo -e "\n${GREEN}啟動網頁服務器 (埠號: $WEB_PORT)...${NC}"
-        cd web
-        python3 -m http.server $WEB_PORT &
-        WEB_PID=$!
-        echo "WEB PID: $WEB_PID"
-        cd ..
-        
-        sleep 2
-        
+
+        # 等待 API 啟動
+        echo -n "等待 API 服務啟動"
+        for i in {1..10}; do
+            if curl -s http://$API_HOST:$API_PORT/api/health > /dev/null 2>&1; then
+                echo " ✅"
+                break
+            fi
+            echo -n "."
+            sleep 1
+        done
+
+        # 檢查服務狀態
+        echo -e "\n${GREEN}檢查服務狀態...${NC}"
+        if curl -s http://$API_HOST:$API_PORT/api/health > /dev/null 2>&1; then
+            echo "✅ 系統完整性檢查通過"
+        else
+            echo "⚠️  無法通過 Nginx 訪問 API，請檢查配置"
+        fi
+
         echo -e "\n${GREEN}=========================================="
         echo "✅ 系統啟動成功！"
         echo "=========================================="
         echo ""
-        echo "API 服務器: http://$API_HOST:$API_PORT"
-        echo "網頁介面: http://$API_HOST:$WEB_PORT"
+        echo "🌐 服務入口: http://$API_HOST:$API_PORT"
+        echo "📊 API 健康檢查: http://$API_HOST:$API_PORT/api/health"
+        echo "📚 API 文檔: http://$API_HOST:$API_PORT/api/docs"
         echo ""
-        echo "API 健康檢查: http://$API_HOST:$API_PORT/api/health"
-        echo "API 文檔: http://$API_HOST:$API_PORT/api/docs"
+        echo "📁 靜態文件目錄: $CURRENT_DIR/web"
+        echo "🔧 Nginx 配置: /etc/nginx/sites-available/anr-analyzer"
         echo ""
         echo "按 Ctrl+C 停止服務"
         echo -e "==========================================${NC}"
-        
-        # 等待中斷
-        trap "kill $API_PID $WEB_PID 2>/dev/null; echo -e '\n服務已停止'" INT
+
+        # 監控文件變更（可選）
+        if command -v inotifywait &> /dev/null; then
+            echo -e "\n${YELLOW}提示: 檢測到 inotifywait，可以自動重載前端變更${NC}"
+            (
+                while true; do
+                    inotifywait -r -e modify,create,delete $CURRENT_DIR/web 2>/dev/null
+                    echo "檢測到前端文件變更，重載 Nginx..."
+                    sudo nginx -s reload
+                done
+            ) &
+            WATCH_PID=$!
+            trap "kill $API_PID $WATCH_PID 2>/dev/null; echo -e '\n✋ 服務已停止'" INT
+        else
+            trap "kill $API_PID 2>/dev/null; echo -e '\n✋ API 服務已停止'" INT
+        fi
+
         wait
         ;;
         
@@ -213,7 +292,6 @@ case $mode in
         echo "API 服務: http://localhost:5000"
         echo ""
         echo "停止 Gunicorn: pkill gunicorn"
-		echo "停止 nginx: sudo systemctl stop nginx"
         echo -e "==========================================${NC}"
         ;;
         
