@@ -54,23 +54,43 @@ case $mode in
         if [ ! -f ".env" ]; then
             echo -e "${YELLOW}警告: .env 檔案不存在，複製範例檔案${NC}"
             cp .env.example .env
-            echo -e "${YELLOW}請編輯 .env 檔案並填入您的 API keys${NC}"
+            echo -e "${YELLOW}請編輯 .env 檔案並填入您的配置資訊 (包括 API_PORT 和 WEB_PORT)${NC}"
         fi
         
+        # 從 .env 檔案加載變數
+        # 這是一個簡單的解析 .env 檔案的方法
+        # 更健壯的方法可能需要使用如 'dotenv' 類的工具，但對於 shell 腳本，這種方式足夠了
+        if [ -f ".env" ]; then
+            export $(grep -v '^#' .env | xargs)
+        fi
+
         # 設定開發環境
         export ENVIRONMENT=development
         
+        # 使用 .env 中的埠號，如果沒有設定則使用預設值
+        API_PORT=${API_PORT:-5000} # 如果 .env 中沒有設定 API_PORT，則預設為 5000
+        WEB_PORT=${WEB_PORT:-5566} # 如果 .env 中沒有設定 WEB_PORT，則預設為 5566
+        
+		# 這裡使用 lsof 檢查並殺死占用埠號的進程，然後啟動新的服務
+		sudo kill -9 $(sudo lsof -t -i :$API_PORT) 2>/dev/null || true # 2>/dev/null || true 防止錯誤輸出中斷腳本
+        sudo kill -9 $(sudo lsof -t -i :$WEB_PORT) 2>/dev/null || true # 2>/dev/null || true 防止錯誤輸出中斷腳本
+		
         # 啟動服務
-        echo -e "\n${GREEN}啟動 API 服務器...${NC}"
+        echo -e "\n${GREEN}啟動 API 服務器 (埠號: $API_PORT)...${NC}"
+        # 這裡假設你的 API 服務器程式碼會讀取環境變數或以參數形式接收埠號
+        # 如果你的 Python API 服務器需要明確傳遞埠號，你需要調整啟動命令
+        # 例如：python -m src.api.app --port $API_PORT
+        # 如果你的 Python 服務器會自動讀取環境變數，則無需額外修改
         python -m src.api.app &
         API_PID=$!
-        
+        echo "API PID: $API_PID"
         sleep 2
         
-        echo -e "\n${GREEN}啟動網頁服務器...${NC}"
+        echo -e "\n${GREEN}啟動網頁服務器 (埠號: $WEB_PORT)...${NC}"
         cd web
-        python3 -m http.server 5566 &
+        python3 -m http.server $WEB_PORT &
         WEB_PID=$!
+        echo "WEB PID: $WEB_PID"
         cd ..
         
         sleep 2
@@ -79,17 +99,17 @@ case $mode in
         echo "✅ 系統啟動成功！"
         echo "=========================================="
         echo ""
-        echo "API 服務器: http://localhost:5000"
-        echo "網頁介面: http://localhost:5566"
+        echo "API 服務器: http://$API_HOST:$API_PORT"
+        echo "網頁介面: http://$API_HOST:$WEB_PORT"
         echo ""
-        echo "API 健康檢查: http://localhost:5000/api/health"
-        echo "API 文檔: http://localhost:5000/api/docs"
+        echo "API 健康檢查: http://$API_HOST:$API_PORT/api/health"
+        echo "API 文檔: http://$API_HOST:$API_PORT/api/docs"
         echo ""
         echo "按 Ctrl+C 停止服務"
         echo -e "==========================================${NC}"
         
         # 等待中斷
-        trap "kill $API_PID $WEB_PID 2>/dev/null; echo '服務已停止'" INT
+        trap "kill $API_PID $WEB_PID 2>/dev/null; echo -e '\n服務已停止'" INT
         wait
         ;;
         

@@ -1303,7 +1303,7 @@
                     addStatusLog('系統狀態異常', 'warning');
                 }
             } catch (error) {
-                addStatusLog('無法連接到伺服器', 'error');
+                addStatusLog('無法連接到伺服器:'+error, 'error');
             }
         }
 
