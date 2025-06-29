@@ -1,15 +1,18 @@
 """
 核心分析引擎
 """
+from datetime import datetime
 from typing import Dict, Optional, AsyncIterator, Any
 import asyncio
 
-from ..config import SystemConfig
-from models import ModelProvider, AnalysisMode
-from ..wrappers import AnthropicAiLogWrapper, OpenAiLogWrapper
-from ..utils import EnhancedStatusManager, CacheManager, StructuredLogger, HealthChecker
-from ..storage import ResultStorage, AnalysisTask
-
+from src.config import SystemConfig
+from src.config.base import ModelProvider, AnalysisMode
+from utils.task_queue import TaskQueue
+from wrappers.anthropic_wrapper import AnthropicAiLogWrapper
+from wrappers.openai_wrapper import OpenAiLogWrapper
+from utils import EnhancedStatusManager, CacheManager, StructuredLogger, HealthChecker
+from storage import ResultStorage, AnalysisTask
+from wrappers.base_wrapper import BaseAiLogWrapper
 
 class AiAnalysisEngine:
     """統一的 AI 分析引擎"""
@@ -39,7 +42,7 @@ class AiAnalysisEngine:
         """初始化所有 wrapper"""
         # Anthropic
         if self.config.api_keys.anthropic:
-            from ..config import AnthropicApiConfig
+            from config import AnthropicApiConfig
             anthropic_config = AnthropicApiConfig()
             anthropic_config.api_key = self.config.api_keys.anthropic
             
@@ -50,7 +53,7 @@ class AiAnalysisEngine:
         
         # OpenAI
         if self.config.api_keys.openai:
-            from ..config import OpenApiConfig
+            from config import OpenApiConfig
             openai_config = OpenApiConfig()
             openai_config.api_key = self.config.api_keys.openai
             
