@@ -1,0 +1,11 @@
+----- pid 12345 at 2024-01-15 10:30:45 -----
+Cmd line: com.example.app
+ABI: 'arm64'
+
+"main" prio=5 tid=1 Blocked
+  | group="main" sCount=1 dsCount=0 flags=1
+  | state=S schedstat=( 0 0 0 ) utm=0 stm=0 core=0 HZ=100
+  at android.os.MessageQueue.nativePollOnce(Native Method)
+  at android.os.MessageQueue.next(MessageQueue.java:336)
+  at android.os.Looper.loop(Looper.java:174)
+  at android.app.ActivityThread.main(ActivityThread.java:7356)

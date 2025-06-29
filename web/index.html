@@ -1,0 +1,1336 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ANR/Tombstone AI 分析系統</title>
+    
+    <!-- 引入必要的庫 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.css" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.js"></script>
+    
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #10b981;
+            --danger-color: #ef4444;
+            --warning-color: #f59e0b;
+            --dark-bg: #1f2937;
+            --light-bg: #f3f4f6;
+            --border-color: #e5e7eb;
+            --text-primary: #111827;
+            --text-secondary: #6b7280;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--light-bg);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Header */
+        .header {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            font-size: 28px;
+            color: var(--primary-color);
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+        }
+
+        /* Main Grid Layout */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        @media (max-width: 1024px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Upload Section */
+        .upload-section {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .drop-zone {
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            padding: 48px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .drop-zone:hover {
+            border-color: var(--primary-color);
+            background-color: #f0f9ff;
+        }
+
+        .drop-zone.drag-over {
+            border-color: var(--secondary-color);
+            background-color: #f0fdf4;
+            transform: scale(1.02);
+        }
+
+        .drop-zone-content {
+            pointer-events: none;
+        }
+
+        .upload-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 16px;
+            opacity: 0.3;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .file-info {
+            margin-top: 24px;
+            padding: 16px;
+            background: var(--light-bg);
+            border-radius: 8px;
+            display: none;
+        }
+
+        .file-info.active {
+            display: block;
+        }
+
+        /* Analysis Options */
+        .options-section {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .option-group {
+            margin-bottom: 24px;
+        }
+
+        .option-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .radio-group {
+            display: grid;
+            gap: 12px;
+        }
+
+        .radio-card {
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .radio-card:hover {
+            border-color: var(--primary-color);
+            background-color: #f0f9ff;
+        }
+
+        .radio-card input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+        }
+
+        .radio-card input[type="radio"]:checked + .radio-content {
+            color: var(--primary-color);
+        }
+
+        .radio-card input[type="radio"]:checked ~ .radio-content::before {
+            content: '✓';
+            position: absolute;
+            right: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--primary-color);
+            font-size: 20px;
+        }
+
+        .radio-content {
+            position: relative;
+        }
+
+        .radio-content h4 {
+            font-size: 16px;
+            margin-bottom: 4px;
+        }
+
+        .radio-content p {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        /* Cost Estimation */
+        .cost-section {
+            background: #fef3c7;
+            border: 1px solid #fcd34d;
+            border-radius: 8px;
+            padding: 16px;
+            margin-top: 24px;
+            display: none;
+        }
+
+        .cost-section.active {
+            display: block;
+        }
+
+        .cost-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-top: 12px;
+        }
+
+        .cost-item {
+            text-align: center;
+        }
+
+        .cost-item .label {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .cost-item .value {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        /* Action Buttons */
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #1d4ed8;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+
+        .btn-primary:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-danger {
+            background: var(--danger-color);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .btn-secondary {
+            background: white;
+            color: var(--text-primary);
+            border: 2px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: var(--light-bg);
+        }
+
+        /* Progress Section */
+        .progress-section {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 24px;
+            display: none;
+        }
+
+        .progress-section.active {
+            display: block;
+        }
+
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .progress-bar-container {
+            background: var(--light-bg);
+            height: 8px;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 16px;
+        }
+
+        .progress-bar {
+            background: var(--primary-color);
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 4px;
+        }
+
+        .progress-details {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            padding: 16px;
+            background: var(--light-bg);
+            border-radius: 8px;
+        }
+
+        .progress-detail {
+            text-align: center;
+        }
+
+        .progress-detail .label {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .progress-detail .value {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        /* Results Section */
+        .results-section {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            display: none;
+        }
+
+        .results-section.active {
+            display: block;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .results-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 24px;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        .tab {
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            color: var(--text-secondary);
+            position: relative;
+            transition: all 0.2s ease;
+        }
+
+        .tab:hover {
+            color: var(--text-primary);
+        }
+
+        .tab.active {
+            color: var(--primary-color);
+        }
+
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--primary-color);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .results-content {
+            max-height: 600px;
+            overflow-y: auto;
+            padding: 16px;
+            background: var(--light-bg);
+            border-radius: 8px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+
+        /* Status Messages */
+        .status-message {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(-20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .status-info {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .status-success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .status-warning {
+            background: #fed7aa;
+            color: #92400e;
+        }
+
+        .status-error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        /* Loading Animation */
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 3px solid var(--border-color);
+            border-top: 3px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .cost-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .progress-details {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+            
+            .btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        /* Charts Container */
+        .charts-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-top: 24px;
+        }
+
+        .chart-card {
+            background: white;
+            border-radius: 8px;
+            padding: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .chart-card h4 {
+            margin-bottom: 16px;
+            color: var(--text-primary);
+        }
+
+        /* Status Panel */
+        .status-panel {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: white;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            min-width: 300px;
+            max-height: 400px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+
+        .status-panel.active {
+            display: block;
+        }
+
+        .status-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .status-panel-close {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            color: var(--text-secondary);
+        }
+
+        .status-log {
+            font-size: 12px;
+            font-family: monospace;
+            line-height: 1.4;
+        }
+
+        .status-log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .status-log-time {
+            color: var(--text-secondary);
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🤖 ANR/Tombstone AI 分析系統</h1>
+            <p>使用先進的 AI 技術分析 Android 應用程式的 ANR 和 Tombstone 日誌</p>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="main-grid">
+            <!-- Upload Section -->
+            <div class="upload-section">
+                <h3 style="margin-bottom: 16px;">上傳檔案</h3>
+                
+                <div class="drop-zone" id="dropZone">
+                    <div class="drop-zone-content">
+                        <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <h4>拖放檔案到這裡</h4>
+                        <p style="color: var(--text-secondary); margin: 8px 0;">或</p>
+                        <button class="btn btn-secondary">選擇檔案</button>
+                        <p style="font-size: 12px; color: var(--text-secondary); margin-top: 16px;">
+                            支援 .txt, .log 檔案，最大 20MB
+                        </p>
+                    </div>
+                    <input type="file" id="fileInput" class="file-input" accept=".txt,.log">
+                </div>
+
+                <div class="file-info" id="fileInfo">
+                    <h4 style="margin-bottom: 8px;">檔案資訊</h4>
+                    <div style="display: grid; gap: 8px; font-size: 14px;">
+                        <div>檔案名稱：<span id="fileName"></span></div>
+                        <div>檔案大小：<span id="fileSize"></span></div>
+                        <div>預估 Tokens：<span id="estimatedTokens"></span></div>
+                        <div>檔案類型：<span id="fileType"></span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Options Section -->
+            <div class="options-section">
+                <h3 style="margin-bottom: 16px;">分析選項</h3>
+
+                <!-- Log Type -->
+                <div class="option-group">
+                    <label>日誌類型</label>
+                    <div class="radio-group">
+                        <label class="radio-card">
+                            <input type="radio" name="logType" value="anr" checked>
+                            <div class="radio-content">
+                                <h4>ANR (Application Not Responding)</h4>
+                                <p>分析應用程式無回應的問題</p>
+                            </div>
+                        </label>
+                        <label class="radio-card">
+                            <input type="radio" name="logType" value="tombstone">
+                            <div class="radio-content">
+                                <h4>Tombstone (Native Crash)</h4>
+                                <p>分析原生程式碼崩潰問題</p>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Analysis Mode -->
+                <div class="option-group">
+                    <label>分析模式</label>
+                    <div class="radio-group">
+                        <label class="radio-card">
+                            <input type="radio" name="analysisMode" value="quick">
+                            <div class="radio-content">
+                                <h4>快速分析</h4>
+                                <p>快速找出關鍵問題（1-2分鐘）</p>
+                            </div>
+                        </label>
+                        <label class="radio-card">
+                            <input type="radio" name="analysisMode" value="intelligent" checked>
+                            <div class="radio-content">
+                                <h4>智能分析</h4>
+                                <p>平衡速度與深度（3-5分鐘）</p>
+                            </div>
+                        </label>
+                        <label class="radio-card">
+                            <input type="radio" name="analysisMode" value="large_file">
+                            <div class="radio-content">
+                                <h4>大檔分析</h4>
+                                <p>適合超大檔案（5-10分鐘）</p>
+                            </div>
+                        </label>
+                        <label class="radio-card">
+                            <input type="radio" name="analysisMode" value="max_token">
+                            <div class="radio-content">
+                                <h4>深度分析</h4>
+                                <p>最詳細的分析報告（10+分鐘）</p>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- AI Provider -->
+                <div class="option-group">
+                    <label>AI 提供者</label>
+                    <div class="radio-group">
+                        <label class="radio-card">
+                            <input type="radio" name="provider" value="anthropic" checked>
+                            <div class="radio-content">
+                                <h4>Anthropic Claude</h4>
+                                <p>最新的 Claude 4 模型</p>
+                            </div>
+                        </label>
+                        <label class="radio-card">
+                            <input type="radio" name="provider" value="openai">
+                            <div class="radio-content">
+                                <h4>OpenAI GPT</h4>
+                                <p>GPT-4 優化版本</p>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Cost Estimation -->
+                <div class="cost-section" id="costSection">
+                    <h4 style="margin-bottom: 8px;">💰 成本估算</h4>
+                    <div class="cost-grid">
+                        <div class="cost-item">
+                            <div class="label">預估成本</div>
+                            <div class="value" id="estimatedCost">$0.00</div>
+                        </div>
+                        <div class="cost-item">
+                            <div class="label">處理時間</div>
+                            <div class="value" id="estimatedTime">0 分鐘</div>
+                        </div>
+                        <div class="cost-item">
+                            <div class="label">推薦模式</div>
+                            <div class="value" id="recommendedMode">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="action-buttons">
+                    <button class="btn btn-primary" id="analyzeBtn" disabled>
+                        <span class="spinner" style="display: none;"></span>
+                        <span>開始分析</span>
+                    </button>
+                    <button class="btn btn-danger" id="cancelBtn" style="display: none;">
+                        停止分析
+                    </button>
+                    <button class="btn btn-secondary" id="clearBtn">
+                        清除
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Section -->
+        <div class="progress-section" id="progressSection">
+            <div class="progress-header">
+                <h3>分析進度</h3>
+                <span id="analysisId" style="font-size: 12px; color: var(--text-secondary);"></span>
+            </div>
+            
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            
+            <div class="progress-details">
+                <div class="progress-detail">
+                    <div class="label">進度</div>
+                    <div class="value" id="progressPercent">0%</div>
+                </div>
+                <div class="progress-detail">
+                    <div class="label">已處理區塊</div>
+                    <div class="value" id="processedChunks">0/0</div>
+                </div>
+                <div class="progress-detail">
+                    <div class="label">輸入 Tokens</div>
+                    <div class="value" id="inputTokens">0</div>
+                </div>
+                <div class="progress-detail">
+                    <div class="label">輸出 Tokens</div>
+                    <div class="value" id="outputTokens">0</div>
+                </div>
+            </div>
+            
+            <div id="statusMessages" style="margin-top: 16px;"></div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="results-section" id="resultsSection">
+            <div class="results-header">
+                <h3>分析結果</h3>
+                <div>
+                    <button class="btn btn-secondary" onclick="downloadResults()">
+                        下載報告
+                    </button>
+                    <button class="btn btn-secondary" onclick="copyResults()">
+                        複製結果
+                    </button>
+                </div>
+            </div>
+
+            <div class="results-tabs">
+                <button class="tab active" onclick="switchTab('analysis')">分析報告</button>
+                <button class="tab" onclick="switchTab('raw')">原始輸出</button>
+                <button class="tab" onclick="switchTab('stats')">統計資訊</button>
+            </div>
+
+            <div class="tab-content active" id="analysisTab">
+                <div class="results-content" id="analysisContent"></div>
+            </div>
+
+            <div class="tab-content" id="rawTab">
+                <div class="results-content" id="rawContent"></div>
+            </div>
+
+            <div class="tab-content" id="statsTab">
+                <div class="charts-container">
+                    <div class="chart-card">
+                        <h4>Token 使用統計</h4>
+                        <canvas id="tokenChart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h4>成本分析</h4>
+                        <canvas id="costChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Panel -->
+    <div class="status-panel" id="statusPanel">
+        <div class="status-panel-header">
+            <h4>系統狀態</h4>
+            <button class="status-panel-close" onclick="toggleStatusPanel()">×</button>
+        </div>
+        <div class="status-log" id="statusLog"></div>
+    </div>
+
+    <script>
+        // Global variables
+        let currentFile = null;
+        let analysisId = null;
+        let eventSource = null;
+        let analysisResults = {
+            content: '',
+            raw: '',
+            stats: {}
+        };
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            setupDropZone();
+            setupEventListeners();
+            checkApiStatus();
+        });
+
+        // Drop Zone Setup
+        function setupDropZone() {
+            const dropZone = document.getElementById('dropZone');
+            const fileInput = document.getElementById('fileInput');
+
+            dropZone.addEventListener('click', () => fileInput.click());
+            
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropZone.classList.add('drag-over');
+            });
+
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('drag-over');
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    handleFile(files[0]);
+                }
+            });
+
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    handleFile(e.target.files[0]);
+                }
+            });
+        }
+
+        // Event Listeners
+        function setupEventListeners() {
+            document.getElementById('analyzeBtn').addEventListener('click', startAnalysis);
+            document.getElementById('cancelBtn').addEventListener('click', cancelAnalysis);
+            document.getElementById('clearBtn').addEventListener('click', clearAll);
+            
+            // Mode change listener for cost estimation
+            document.querySelectorAll('input[name="analysisMode"]').forEach(radio => {
+                radio.addEventListener('change', updateCostEstimation);
+            });
+            
+            document.querySelectorAll('input[name="provider"]').forEach(radio => {
+                radio.addEventListener('change', updateCostEstimation);
+            });
+        }
+
+        // File Handling
+        function handleFile(file) {
+            // Validate file
+            if (!file.name.match(/\.(txt|log)$/i)) {
+                showMessage('請上傳 .txt 或 .log 檔案', 'error');
+                return;
+            }
+
+            if (file.size > 20 * 1024 * 1024) {
+                showMessage('檔案大小不能超過 20MB', 'error');
+                return;
+            }
+
+            currentFile = file;
+            
+            // Update file info
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileSize').textContent = formatFileSize(file.size);
+            document.getElementById('fileInfo').classList.add('active');
+            
+            // Detect file type
+            detectFileType(file);
+            
+            // Estimate tokens
+            estimateTokens(file);
+            
+            // Enable analyze button
+            document.getElementById('analyzeBtn').disabled = false;
+            
+            // Update cost estimation
+            updateCostEstimation();
+        }
+
+        // File Type Detection
+        async function detectFileType(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const content = e.target.result;
+                const isANR = content.includes('DALVIK THREADS') || content.includes('pid') && content.includes('tid');
+                const isTombstone = content.includes('*** *** ***') || content.includes('Build fingerprint');
+                
+                if (isANR) {
+                    document.querySelector('input[value="anr"]').checked = true;
+                    document.getElementById('fileType').textContent = 'ANR Log';
+                } else if (isTombstone) {
+                    document.querySelector('input[value="tombstone"]').checked = true;
+                    document.getElementById('fileType').textContent = 'Tombstone Log';
+                } else {
+                    document.getElementById('fileType').textContent = '未知類型';
+                }
+            };
+            reader.readAsText(file.slice(0, 1024)); // Read first 1KB for detection
+        }
+
+        // Token Estimation
+        function estimateTokens(file) {
+            const chars = file.size;
+            const tokens = Math.ceil(chars / 2.5);
+            document.getElementById('estimatedTokens').textContent = tokens.toLocaleString();
+        }
+
+        // Cost Estimation
+        async function updateCostEstimation() {
+            if (!currentFile) return;
+
+            const mode = document.querySelector('input[name="analysisMode"]:checked').value;
+            const provider = document.querySelector('input[name="provider"]:checked').value;
+            const fileSizeKB = currentFile.size / 1024;
+
+            try {
+                const response = await fetch('/api/ai/estimate-analysis-cost', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        file_size_kb: fileSizeKB,
+                        mode: mode
+                    })
+                });
+
+                const data = await response.json();
+                
+                // Find cheapest option for selected provider
+                const providerModels = provider === 'anthropic' 
+                    ? [...data.tier2_models, ...data.tier3_models, ...data.tier4_models]
+                    : data.openai_models;
+                
+                if (providerModels.length > 0) {
+                    const cheapest = providerModels[0];
+                    document.getElementById('estimatedCost').textContent = `$${cheapest.total_cost.toFixed(2)}`;
+                    document.getElementById('estimatedTime').textContent = `${cheapest.analysis_time_estimate.toFixed(1)} 分鐘`;
+                }
+
+                // Update recommended mode
+                const recommended = data.file_info.size_kb < 1024 ? '快速' : 
+                                  data.file_info.size_kb < 5120 ? '智能' : '大檔';
+                document.getElementById('recommendedMode').textContent = recommended;
+                
+                document.getElementById('costSection').classList.add('active');
+            } catch (error) {
+                console.error('Cost estimation error:', error);
+            }
+        }
+
+        // Start Analysis
+        async function startAnalysis() {
+            if (!currentFile) return;
+
+            const logType = document.querySelector('input[name="logType"]:checked').value;
+            const mode = document.querySelector('input[name="analysisMode"]:checked').value;
+            const provider = document.querySelector('input[name="provider"]:checked').value;
+
+            // Read file content
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const content = e.target.result;
+                
+                // Update UI
+                document.getElementById('analyzeBtn').disabled = true;
+                document.querySelector('#analyzeBtn .spinner').style.display = 'inline-block';
+                document.querySelector('#analyzeBtn span:last-child').textContent = '分析中...';
+                document.getElementById('cancelBtn').style.display = 'inline-flex';
+                document.getElementById('progressSection').classList.add('active');
+                
+                // Clear previous results
+                clearResults();
+                
+                // Start SSE connection
+                startSSEConnection(content, logType, mode, provider);
+            };
+            reader.readAsText(currentFile);
+        }
+
+        // SSE Connection
+        function startSSEConnection(content, logType, mode, provider) {
+            const params = new URLSearchParams({
+                content: content,
+                log_type: logType,
+                mode: mode,
+                provider: provider
+            });
+
+            eventSource = new EventSource(`/api/ai/analyze-with-cancellation?${params}`);
+            
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                handleSSEMessage(data);
+            };
+
+            eventSource.onerror = function(error) {
+                console.error('SSE error:', error);
+                showMessage('連接錯誤，請重試', 'error');
+                stopAnalysis();
+            };
+        }
+
+        // Handle SSE Messages
+        function handleSSEMessage(data) {
+            switch (data.type) {
+                case 'start':
+                    analysisId = data.analysis_id;
+                    document.getElementById('analysisId').textContent = `ID: ${analysisId}`;
+                    addStatusLog('開始分析', 'info');
+                    break;
+                    
+                case 'content':
+                    // Append content
+                    analysisResults.content += data.content;
+                    analysisResults.raw += data.content;
+                    
+                    // Update display
+                    updateResultsDisplay();
+                    break;
+                    
+                case 'progress':
+                    updateProgress(data.progress);
+                    break;
+                    
+                case 'feedback':
+                    handleFeedback(data.feedback);
+                    break;
+                    
+                case 'complete':
+                    showMessage('分析完成！', 'success');
+                    stopAnalysis();
+                    showResults();
+                    break;
+                    
+                case 'cancelled':
+                    showMessage('分析已取消', 'warning');
+                    stopAnalysis();
+                    break;
+                    
+                case 'error':
+                    showMessage(`錯誤: ${data.error}`, 'error');
+                    stopAnalysis();
+                    break;
+            }
+        }
+
+        // Cancel Analysis
+        async function cancelAnalysis() {
+            if (!analysisId) return;
+
+            try {
+                const response = await fetch(`/api/ai/cancel-analysis/${analysisId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: 'user_cancelled' })
+                });
+
+                if (response.ok) {
+                    showMessage('正在取消分析...', 'info');
+                }
+            } catch (error) {
+                console.error('Cancel error:', error);
+            }
+        }
+
+        // Stop Analysis
+        function stopAnalysis() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+
+            document.getElementById('analyzeBtn').disabled = false;
+            document.querySelector('#analyzeBtn .spinner').style.display = 'none';
+            document.querySelector('#analyzeBtn span:last-child').textContent = '開始分析';
+            document.getElementById('cancelBtn').style.display = 'none';
+        }
+
+        // Update Progress
+        function updateProgress(progress) {
+            const percent = progress.progress_percentage || 0;
+            document.getElementById('progressBar').style.width = `${percent}%`;
+            document.getElementById('progressPercent').textContent = `${percent.toFixed(1)}%`;
+            
+            if (progress.processed_chunks !== undefined) {
+                document.getElementById('processedChunks').textContent = 
+                    `${progress.processed_chunks}/${progress.total_chunks}`;
+            }
+            
+            if (progress.input_tokens) {
+                document.getElementById('inputTokens').textContent = 
+                    progress.input_tokens.toLocaleString();
+            }
+            
+            if (progress.output_tokens) {
+                document.getElementById('outputTokens').textContent = 
+                    progress.output_tokens.toLocaleString();
+            }
+        }
+
+        // Handle Feedback
+        function handleFeedback(feedback) {
+            const type = feedback.type;
+            const message = feedback.message;
+            
+            showMessage(message, type);
+            addStatusLog(message, type);
+        }
+
+        // Update Results Display
+        function updateResultsDisplay() {
+            // Parse markdown to HTML
+            const html = marked.parse(analysisResults.content);
+            document.getElementById('analysisContent').innerHTML = html;
+            
+            // Update raw content
+            document.getElementById('rawContent').textContent = analysisResults.raw;
+            
+            // Syntax highlighting
+            Prism.highlightAllUnder(document.getElementById('analysisContent'));
+        }
+
+        // Show Results
+        function showResults() {
+            document.getElementById('resultsSection').classList.add('active');
+            
+            // Generate statistics
+            generateStatistics();
+            
+            // Scroll to results
+            document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Generate Statistics
+        function generateStatistics() {
+            // Token usage chart
+            const tokenCtx = document.getElementById('tokenChart').getContext('2d');
+            new Chart(tokenCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['輸入 Tokens', '輸出 Tokens'],
+                    datasets: [{
+                        data: [
+                            parseInt(document.getElementById('inputTokens').textContent) || 0,
+                            parseInt(document.getElementById('outputTokens').textContent) || 0
+                        ],
+                        backgroundColor: ['#3b82f6', '#10b981']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            });
+        }
+
+        // Tab Switching
+        function switchTab(tabName) {
+            // Update tabs
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            // Activate selected tab
+            event.target.classList.add('active');
+            document.getElementById(`${tabName}Tab`).classList.add('active');
+        }
+
+        // Utility Functions
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+        }
+
+        function showMessage(message, type) {
+            const messagesContainer = document.getElementById('statusMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `status-message status-${type}`;
+            messageDiv.textContent = message;
+            
+            messagesContainer.appendChild(messageDiv);
+            
+            // Auto remove after 5 seconds
+            setTimeout(() => {
+                messageDiv.remove();
+            }, 5000);
+        }
+
+        function addStatusLog(message, type) {
+            const log = document.getElementById('statusLog');
+            const entry = document.createElement('div');
+            entry.className = 'status-log-entry';
+            
+            const time = new Date().toLocaleTimeString();
+            entry.innerHTML = `<span class="status-log-time">${time}</span>${message}`;
+            
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+            
+            // Show status panel
+            document.getElementById('statusPanel').classList.add('active');
+        }
+
+        function toggleStatusPanel() {
+            document.getElementById('statusPanel').classList.toggle('active');
+        }
+
+        function clearAll() {
+            currentFile = null;
+            analysisId = null;
+            analysisResults = { content: '', raw: '', stats: {} };
+            
+            document.getElementById('fileInfo').classList.remove('active');
+            document.getElementById('costSection').classList.remove('active');
+            document.getElementById('progressSection').classList.remove('active');
+            document.getElementById('resultsSection').classList.remove('active');
+            document.getElementById('analyzeBtn').disabled = true;
+            
+            clearResults();
+        }
+
+        function clearResults() {
+            document.getElementById('analysisContent').innerHTML = '';
+            document.getElementById('rawContent').textContent = '';
+            document.getElementById('statusMessages').innerHTML = '';
+            document.getElementById('progressBar').style.width = '0%';
+        }
+
+        function downloadResults() {
+            const content = analysisResults.raw;
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `analysis-${new Date().toISOString()}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function copyResults() {
+            navigator.clipboard.writeText(analysisResults.raw).then(() => {
+                showMessage('已複製到剪貼簿', 'success');
+            });
+        }
+
+        // Check API Status
+        async function checkApiStatus() {
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                
+                if (data.overall.status === 'healthy') {
+                    addStatusLog('系統狀態正常', 'info');
+                } else {
+                    addStatusLog('系統狀態異常', 'warning');
+                }
+            } catch (error) {
+                addStatusLog('無法連接到伺服器', 'error');
+            }
+        }
+
+        // Auto-save draft
+        setInterval(() => {
+            if (currentFile && analysisResults.content) {
+                localStorage.setItem('draft_analysis', JSON.stringify({
+                    fileName: currentFile.name,
+                    results: analysisResults,
+                    timestamp: new Date().toISOString()
+                }));
+            }
+        }, 30000); // Every 30 seconds
+
+        // Restore draft on load
+        window.addEventListener('load', () => {
+            const draft = localStorage.getItem('draft_analysis');
+            if (draft) {
+                const data = JSON.parse(draft);
+                const confirm = window.confirm(`發現未完成的分析 (${data.fileName})，是否恢復？`);
+                if (confirm) {
+                    analysisResults = data.results;
+                    updateResultsDisplay();
+                    showResults();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
