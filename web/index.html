@@ -974,27 +974,33 @@
 
                 const data = await response.json();
                 
-                // Find cheapest option for selected provider
-                const providerModels = provider === 'anthropic' 
-                    ? [...data.tier2_models, ...data.tier3_models, ...data.tier4_models]
-                    : data.openai_models;
-                
-                if (providerModels.length > 0) {
-                    const cheapest = providerModels[0];
-                    document.getElementById('estimatedCost').textContent = `$${cheapest.total_cost.toFixed(2)}`;
-                    document.getElementById('estimatedTime').textContent = `${cheapest.analysis_time_estimate.toFixed(1)} 分鐘`;
-                }
+                // 修正：使用正確的資料結構
+                if (data.status === 'success' && data.data) {
+                    const costData = data.data;
+                    
+                    // 找出所選提供者的成本估算
+                    const providerEstimates = costData.cost_estimates.filter(
+                        estimate => estimate.provider === provider
+                    );
+                    
+                    if (providerEstimates.length > 0) {
+                        const estimate = providerEstimates[0];
+                        document.getElementById('estimatedCost').textContent = 
+                            `$${estimate.total_cost.toFixed(2)}`;
+                        document.getElementById('estimatedTime').textContent = 
+                            `${estimate.analysis_time_minutes.toFixed(1)} 分鐘`;
+                    }
 
-                // Update recommended mode
-                const recommended = data.file_info.size_kb < 1024 ? '快速' : 
-                                  data.file_info.size_kb < 5120 ? '智能' : '大檔';
-                document.getElementById('recommendedMode').textContent = recommended;
-                
-                document.getElementById('costSection').classList.add('active');
+                    // 更新推薦模式
+                    document.getElementById('recommendedMode').textContent = 
+                        costData.recommended_mode || '-';
+                    
+                    document.getElementById('costSection').classList.add('active');
+                }
             } catch (error) {
                 console.error('Cost estimation error:', error);
             }
-        }
+        }        
 
         // Start Analysis
         async function startAnalysis() {
@@ -1004,23 +1010,73 @@
             const mode = document.querySelector('input[name="analysisMode"]:checked').value;
             const provider = document.querySelector('input[name="provider"]:checked').value;
 
-            // Read file content
+            // 讀取檔案內容
             const reader = new FileReader();
             reader.onload = async function(e) {
                 const content = e.target.result;
                 
-                // Update UI
+                // 更新 UI
                 document.getElementById('analyzeBtn').disabled = true;
                 document.querySelector('#analyzeBtn .spinner').style.display = 'inline-block';
                 document.querySelector('#analyzeBtn span:last-child').textContent = '分析中...';
                 document.getElementById('cancelBtn').style.display = 'inline-flex';
                 document.getElementById('progressSection').classList.add('active');
                 
-                // Clear previous results
+                // 清除之前的結果
                 clearResults();
                 
-                // Start SSE connection
-                startSSEConnection(content, logType, mode, provider);
+                // 使用 POST 請求，將內容放在 body 中
+                fetch('/api/ai/analyze-with-cancellation', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        content: content,
+                        log_type: logType,
+                        mode: mode,
+                        provider: provider
+                    })
+                }).then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    
+                    // 處理 SSE 流
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    
+                    return reader.read().then(function processResult(result) {
+                        if (result.done) return;
+                        
+                        buffer += decoder.decode(result.value, { stream: true });
+                        const lines = buffer.split('\n');
+                        
+                        // 處理所有完整的行
+                        for (let i = 0; i < lines.length - 1; i++) {
+                            const line = lines[i].trim();
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(line.substring(6));
+                                    handleSSEMessage(data);
+                                } catch (e) {
+                                    console.error('Error parsing SSE data:', e);
+                                }
+                            }
+                        }
+                        
+                        // 保留最後一個不完整的行在緩衝區中
+                        buffer = lines[lines.length - 1];
+                        
+                        // 繼續讀取
+                        return reader.read().then(processResult);
+                    });
+                }).catch(error => {
+                    console.error('Analysis error:', error);
+                    showMessage(`錯誤: ${error.message}`, 'error');
+                    stopAnalysis();
+                });
             };
             reader.readAsText(currentFile);
         }

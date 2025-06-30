@@ -147,6 +147,12 @@ def analyze_with_cancellation():
     """可取消的分析 API（Server-Sent Events）"""
     data = request.get_json()
     
+    # 從 POST body 獲取參數，而不是從 URL
+    content = data.get('content', '')
+    log_type = data.get('log_type', 'anr')
+    mode = data.get('mode', 'intelligent')
+    provider = data.get('provider', 'anthropic')
+    
     def generate():
         """生成 SSE 事件流"""
         analysis_id = str(uuid.uuid4())
@@ -155,13 +161,15 @@ def analyze_with_cancellation():
         yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
         
         # 模擬分析過程
-        for i in range(10):
+        total_chunks = 10
+        for i in range(total_chunks):
             # 進度更新
-            progress = (i + 1) * 10
-            yield f"data: {json.dumps({'type': 'progress', 'progress': {'progress_percentage': progress}})}\n\n"
+            progress = ((i + 1) / total_chunks) * 100
+            yield f"data: {json.dumps({'type': 'progress', 'progress': {'progress_percentage': progress, 'current_chunk': i + 1, 'total_chunks': total_chunks}})}\n\n"
             
             # 內容片段
-            yield f"data: {json.dumps({'type': 'content', 'content': f'分析進度 {progress}%...'})}\n\n"
+            content_chunk = f'\n## 分析進度 {i+1}/{total_chunks}\n\n正在分析 {log_type.upper()} 日誌...\n'
+            yield f"data: {json.dumps({'type': 'content', 'content': content_chunk})}\n\n"
             
             import time
             time.sleep(0.5)  # 模擬處理時間
