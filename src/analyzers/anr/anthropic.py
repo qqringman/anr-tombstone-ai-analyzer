@@ -30,119 +30,99 @@ class AnthropicApiStreamingANRAnalyzer(BaseANRAnalyzer):
         self.client = AsyncAnthropic(api_key=config.api_key)
     
     async def analyze(self, 
-                     content: str, 
-                     mode: AnalysisMode,
-                     cancellation_token: Optional[CancellationToken] = None) -> AsyncIterator[str]:
+                 content: str, 
+                 mode: AnalysisMode,
+                 cancellation_token: Optional[CancellationToken] = None) -> AsyncIterator[str]:
         """執行 ANR 分析"""
+        print(f"[DEBUG] Starting analyze method")
         try:
             # 驗證內容
             if not self.validate_content(content):
-                await self.status_manager.add_message(
-                    MessageType.WARNING,
-                    "內容可能不是有效的 ANR 日誌"
-                )
+                print(f"[DEBUG] Content validation failed")
+                # 不要等待 status_manager，直接輸出警告
+                yield "⚠️ 警告：內容可能不是有效的 ANR 日誌\n\n"
             
+            print(f"[DEBUG] Preprocessing content")
             # 預處理
             content = self.preprocess_content(content)
             
+            print(f"[DEBUG] Chunking content")
             # 分塊
             chunks = await self.chunk_content(content, mode)
             total_chunks = len(chunks)
+            print(f"[DEBUG] Total chunks: {total_chunks}")
             
-            await self.status_manager.update_progress(0, total_chunks)
-            await self.status_manager.add_message(
-                MessageType.INFO,
-                f"開始分析 ANR 日誌（{total_chunks} 個區塊）"
-            )
+            # 不使用 status_manager 的更新，直接輸出
+            yield f"開始分析 ANR 日誌（{total_chunks} 個區塊）\n\n"
             
             # 輸出分析標題
             yield self.format_analysis_header("ANR", mode)
             
             # 處理每個塊
             for i, chunk in enumerate(chunks):
+                print(f"[DEBUG] Processing chunk {i+1}/{total_chunks}")
+                
                 # 檢查取消
-                await self.check_cancellation(cancellation_token)
+                if cancellation_token:
+                    cancellation_token.check()
                 
                 # 獲取提示詞
                 prompt = self.get_prompt(chunk, mode)
                 
                 # 選擇模型
                 model = self.config.get_model_for_mode(mode)
+                print(f"[DEBUG] Using model: {model}")
                 
                 # 輸出塊標題
                 if total_chunks > 1:
                     yield self.format_chunk_header(i, total_chunks)
                 
-                # 呼叫 Claude API
-                stream = await self.client.messages.create(
-                    model=model,
-                    max_tokens=self.config.get_model_config(model).max_tokens,
-                    temperature=self.config.temperature,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ],
-                    stream=True
-                )
-                
-                # 串流輸出
-                chunk_tokens = 0
-                async for event in stream:
-                    # 檢查取消
-                    await self.check_cancellation(cancellation_token)
+                try:
+                    # 呼叫 Claude API
+                    print(f"[DEBUG] Calling Anthropic API")
+                    stream = await self.client.messages.create(
+                        model=model,
+                        max_tokens=self.config.get_model_config(model).max_tokens,
+                        temperature=self.config.temperature,
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ],
+                        stream=True
+                    )
                     
-                    if event.type == 'content_block_delta':
-                        text = event.delta.text
-                        if text:
-                            yield text
-                            chunk_tokens += self.config.estimate_tokens(text)
+                    print(f"[DEBUG] Got stream response")
                     
-                    elif event.type == 'message_start':
-                        # 更新使用統計
-                        if hasattr(event, 'usage'):
-                            await self.status_manager.update_api_usage(
-                                event.usage.input_tokens,
-                                0,
-                                0
-                            )
+                    # 串流輸出
+                    async for event in stream:
+                        if cancellation_token:
+                            cancellation_token.check()
+                        
+                        if event.type == 'content_block_delta':
+                            text = event.delta.text
+                            if text:
+                                yield text
                     
-                    elif event.type == 'message_delta':
-                        # 更新輸出 tokens
-                        if hasattr(event, 'usage'):
-                            await self.status_manager.update_api_usage(
-                                0,
-                                event.usage.output_tokens,
-                                self.config.calculate_cost(
-                                    event.usage.input_tokens,
-                                    event.usage.output_tokens,
-                                    model
-                                )
-                            )
-                
-                # 更新進度
-                await self.status_manager.update_progress(i + 1, total_chunks)
+                    print(f"[DEBUG] Finished chunk {i+1}")
+                    
+                except Exception as e:
+                    print(f"[DEBUG] API call error: {e}")
+                    raise
                 
                 # 塊之間添加分隔
                 if i < total_chunks - 1:
                     yield "\n\n---\n\n"
             
             # 完成
-            await self.status_manager.add_message(
-                MessageType.SUCCESS,
-                "ANR 分析完成"
-            )
+            yield "\n\n✅ ANR 分析完成\n"
+            print(f"[DEBUG] Analysis completed")
             
-            # 更新統計
-            self._stats["total_analyses"] += 1
-            self._stats["total_chunks"] += total_chunks
-            
-        except CancellationException:
-            await self.status_manager.record_cancellation("用戶取消")
-            raise
         except Exception as e:
-            await self.status_manager.record_error(f"分析錯誤: {str(e)}")
+            print(f"[DEBUG] Analysis error: {e}")
+            import traceback
+            traceback.print_exc()
             yield self.format_error_response(e)
             raise
     

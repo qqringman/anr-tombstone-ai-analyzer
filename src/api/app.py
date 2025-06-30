@@ -172,17 +172,6 @@ def analyze_basic():
             "message": str(e)
         }), 500
 
-# 可取消的分析 API (SSE)
-import concurrent.futures
-import threading
-import asyncio
-import threading
-from queue import Queue, Empty
-from concurrent.futures import ThreadPoolExecutor
-
-# 創建線程池
-executor = ThreadPoolExecutor(max_workers=5)
-
 @app.route('/api/ai/analyze-with-cancellation', methods=['POST'])
 def analyze_with_cancellation():
     """可取消的 AI 分析 (SSE)"""
@@ -202,90 +191,66 @@ def analyze_with_cancellation():
         yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
         
         try:
-            # 使用同步方式調用 API
-            if provider == 'anthropic':
-                from anthropic import Anthropic
+            # 獲取 engine
+            engine = app.config.get('ANALYSIS_ENGINE')
+            if not engine:
+                yield f"data: {json.dumps({'type': 'error', 'error': 'Engine not initialized'})}\n\n"
+                return
+            
+            # 設置 provider
+            if provider:
+                try:
+                    from src.config.base import ModelProvider
+                    engine.set_provider(ModelProvider(provider))
+                except Exception as e:
+                    print(f"[DEBUG] Failed to set provider: {e}")
+            
+            # 使用同步包裝
+            chunk_count = 0
+            input_tokens = 0
+            output_tokens = 0
+            
+            for chunk in engine.analyze_sync_wrapper(content, log_type, mode, provider):
+                # 檢查是否是錯誤
+                if chunk.startswith("ERROR:"):
+                    yield f"data: {json.dumps({'type': 'error', 'error': chunk[7:]})}\n\n"
+                    break
                 
-                api_key = os.getenv('ANTHROPIC_API_KEY')
-                if not api_key:
-                    yield f"data: {json.dumps({'type': 'error', 'error': 'Anthropic API key not found'})}\n\n"
-                    return
+                # 檢查是否是統計資訊
+                elif chunk.startswith("\n\n---STATS---\n"):
+                    try:
+                        stats_json = chunk.replace("\n\n---STATS---\n", "")
+                        stats = json.loads(stats_json)
+                        input_tokens = stats.get('input_tokens', 0)
+                        output_tokens = stats.get('output_tokens', 0)
+                    except:
+                        pass
+                    continue
                 
-                client = Anthropic(api_key=api_key)
+                # 發送內容
+                yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+                chunk_count += 1
                 
-                # 選擇模型
-                model_map = {
-                    'quick': 'claude-3-5-haiku-20241022',
-                    'intelligent': 'claude-3-5-sonnet-20241022',
-                    'large_file': 'claude-3-5-sonnet-20241022',
-                    'max_token': 'claude-3-5-sonnet-20241022'
-                }
-                model = model_map.get(mode, 'claude-3-5-sonnet-20241022')
-                
-                # 構建提示詞
-                prompt = _build_prompt(content, log_type, mode)
-                
-                # 創建串流回應
-                stream = client.messages.create(
-                    model=model,
-                    max_tokens=4000 if mode == 'max_token' else 2000,
-                    temperature=0.3,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ],
-                    stream=True
-                )
-                
-                # 串流輸出
-                for chunk in stream:
-                    if chunk.type == 'content_block_delta':
-                        text = chunk.delta.text
-                        if text:
-                            yield f"data: {json.dumps({'type': 'content', 'content': text})}\n\n"
-                
-            elif provider == 'openai':
-                from openai import OpenAI
-                
-                api_key = os.getenv('OPENAI_API_KEY')
-                if not api_key:
-                    yield f"data: {json.dumps({'type': 'error', 'error': 'OpenAI API key not found'})}\n\n"
-                    return
-                
-                client = OpenAI(api_key=api_key)
-                
-                # 選擇模型
-                model_map = {
-                    'quick': 'gpt-3.5-turbo',
-                    'intelligent': 'gpt-4-turbo-preview',
-                    'large_file': 'gpt-4-turbo-preview',
-                    'max_token': 'gpt-4-turbo-preview'
-                }
-                model = model_map.get(mode, 'gpt-4-turbo-preview')
-                
-                # 創建串流回應
-                stream = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": _get_system_prompt(log_type)
-                        },
-                        {
-                            "role": "user",
-                            "content": _build_prompt(content, log_type, mode)
-                        }
-                    ],
-                    temperature=0.3,
-                    stream=True
-                )
-                
-                # 串流輸出
-                for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        yield f"data: {json.dumps({'type': 'content', 'content': chunk.choices[0].delta.content})}\n\n"
+                # 定期發送進度
+                if chunk_count % 10 == 0:
+                    progress = {
+                        'progress_percentage': min(chunk_count * 2, 90),
+                        'current_chunk': chunk_count,
+                        'total_chunks': chunk_count + 10,
+                        'input_tokens': input_tokens,
+                        'output_tokens': output_tokens
+                    }
+                    yield f"data: {json.dumps({'type': 'progress', 'progress': progress})}\n\n"
+            
+            # 發送最終進度
+            final_progress = {
+                'progress_percentage': 100,
+                'current_chunk': chunk_count,
+                'total_chunks': chunk_count,
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens
+            }
+            yield f"data: {json.dumps({'type': 'progress', 'progress': final_progress})}\n\n"
             
             # 發送完成事件
             yield f"data: {json.dumps({'type': 'complete'})}\n\n"
@@ -295,48 +260,6 @@ def analyze_with_cancellation():
             import traceback
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-    
-    # 輔助函數
-    def _build_prompt(content, log_type, mode):
-        """構建提示詞"""
-        if log_type == 'anr':
-            base_prompt = """你是一位資深的 Android 系統工程師，專門分析 ANR (Application Not Responding) 問題。
-請分析以下 ANR 日誌，並提供詳細的技術分析報告。使用 Markdown 格式，包含程式碼範例。"""
-        else:
-            base_prompt = """你是一位資深的 Android Native 開發專家，專門分析 Tombstone (Native Crash) 問題。
-請分析以下崩潰日誌，並提供詳細的技術分析報告。使用 Markdown 格式，包含程式碼範例。"""
-        
-        mode_prompts = {
-            'quick': '\n\n請提供簡潔的分析（3-5個要點），重點解決問題。',
-            'intelligent': '\n\n請提供全面的分析，包含問題診斷、解決方案和預防措施。',
-            'large_file': '\n\n這是一個大型日誌文件，請進行深入分析，找出所有相關問題。',
-            'max_token': '\n\n請提供最詳盡的分析，包含所有技術細節、多個解決方案、最佳實踐和案例。'
-        }
-        
-        # 限制內容長度
-        max_content_length = {
-            'quick': 2000,
-            'intelligent': 4000,
-            'large_file': 8000,
-            'max_token': 12000
-        }.get(mode, 4000)
-        
-        truncated_content = content[:max_content_length]
-        if len(content) > max_content_length:
-            truncated_content += f"\n\n[註：日誌已截斷，原始長度 {len(content)} 字符]"
-        
-        return f"{base_prompt}{mode_prompts.get(mode, '')}\n\n日誌內容：\n```\n{truncated_content}\n```"
-    
-    def _get_system_prompt(log_type):
-        """獲取系統提示詞"""
-        if log_type == 'anr':
-            return """You are an expert Android system engineer specializing in ANR analysis. 
-You have deep knowledge of Android threading, Handler/Looper, and performance optimization.
-Always respond in Traditional Chinese (繁體中文) with technical accuracy."""
-        else:
-            return """You are an expert Android Native developer specializing in crash analysis.
-You have deep knowledge of C/C++, JNI, memory management, and debugging.
-Always respond in Traditional Chinese (繁體中文) with technical accuracy."""
     
     return Response(
         generate(),
@@ -352,7 +275,7 @@ Always respond in Traditional Chinese (繁體中文) with technical accuracy."""
 @app.route('/api/ai/cancel-analysis/<analysis_id>', methods=['POST'])
 async def cancel_analysis(analysis_id):
     """取消分析"""
-    engine = current_app.config.get('ANALYSIS_ENGINE')
+    engine = app.config.get('ANALYSIS_ENGINE')
     if not engine:
         return jsonify({
             'status': 'error',

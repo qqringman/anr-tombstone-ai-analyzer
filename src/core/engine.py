@@ -26,7 +26,7 @@ from .exceptions import (
     InvalidLogTypeException,
     ConfigurationException
 )
-
+import uuid
 
 class AiAnalysisEngine:
     """統一的 AI 分析引擎"""
@@ -332,24 +332,135 @@ class CancellableAiAnalysisEngine(AiAnalysisEngine):
         self.cancellation_manager = get_cancellation_manager()
         self._active_analyses: Dict[str, CancellationToken] = {}
 
-    def analyze_sync_simple(self, content: str, log_type: str, mode: str, provider: str = None):
-            """簡單的同步分析方法 - 用於測試"""
-            import time
+    def analyze_sync_wrapper(self, content: str, log_type: str, mode: str, provider: str = None):
+        """同步包裝方法，用於 Flask"""
+        import asyncio
+        import threading
+        from queue import Queue
+        import time
+        import uuid
+        import json
+        
+        # 結果隊列
+        result_queue = Queue()
+        error_queue = Queue()
+        stats_queue = Queue()
+        
+        def run_in_thread():
+            """在新線程中運行異步代碼"""
+            # 創建新的事件循環
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             
-            # 模擬一些處理
-            time.sleep(1)
+            try:
+                # 轉換參數
+                from src.config.base import AnalysisMode, ModelProvider
+                
+                try:
+                    analysis_mode = AnalysisMode(mode)
+                except ValueError:
+                    analysis_mode = AnalysisMode.INTELLIGENT
+                
+                try:
+                    model_provider = ModelProvider(provider) if provider else None
+                except ValueError:
+                    model_provider = None
+                
+                # 生成分析 ID
+                analysis_id = str(uuid.uuid4())
+                
+                async def run_analysis():
+                    try:
+                        # 設置 provider
+                        if model_provider:
+                            self.set_provider(model_provider)
+                        
+                        if not self._current_provider:
+                            raise ProviderNotAvailableException("No AI provider available")
+                        
+                        wrapper = self._wrappers[self._current_provider]
+                        
+                        # 直接使用 analyzer 而不是 wrapper（避免 status_manager 的問題）
+                        if log_type.lower() == 'anr':
+                            analyzer = wrapper._anr_analyzer
+                        else:
+                            analyzer = wrapper._tombstone_analyzer
+                        
+                        # 創建簡單的取消令牌
+                        from src.core.cancellation import CancellationToken
+                        token = CancellationToken(analysis_id)
+                        
+                        # 直接調用 analyzer 的 analyze 方法
+                        chunk_count = 0
+                        total_content = []
+                        
+                        async for chunk in analyzer.analyze(content, analysis_mode, token):
+                            result_queue.put(chunk)
+                            total_content.append(chunk)
+                            chunk_count += 1
+                        
+                        # 估算 tokens
+                        total_text = ''.join(total_content)
+                        input_tokens = len(content) // 4  # 粗略估算
+                        output_tokens = len(total_text) // 4
+                        
+                        stats_queue.put({
+                            'input_tokens': input_tokens,
+                            'output_tokens': output_tokens,
+                            'total_cost': 0.0  # 需要根據模型計算
+                        })
+                        
+                    except Exception as e:
+                        import traceback
+                        error_queue.put(f"{str(e)}\n{traceback.format_exc()}")
+                
+                # 運行分析
+                loop.run_until_complete(run_analysis())
+                
+            except Exception as e:
+                import traceback
+                error_queue.put(f"Thread error: {str(e)}\n{traceback.format_exc()}")
+            finally:
+                loop.close()
+        
+        # 啟動線程
+        thread = threading.Thread(target=run_in_thread)
+        thread.start()
+        
+        # 返回一個生成器，逐步產生結果
+        def result_generator():
+            while True:
+                # 檢查錯誤
+                if not error_queue.empty():
+                    error = error_queue.get()
+                    yield f"ERROR: {error}"
+                    break
+                
+                # 檢查結果
+                if not result_queue.empty():
+                    chunk = result_queue.get()
+                    yield chunk
+                
+                # 檢查線程是否結束
+                if not thread.is_alive():
+                    # 清空剩餘的隊列
+                    while not result_queue.empty():
+                        yield result_queue.get()
+                    
+                    # 獲取統計資訊
+                    if not stats_queue.empty():
+                        stats = stats_queue.get()
+                        yield f"\n\n---STATS---\n{json.dumps(stats)}\n"
+                    
+                    break
+                
+                # 短暫休眠
+                time.sleep(0.01)
             
-            # 返回一些測試結果
-            return [
-                f"# {log_type.upper()} Analysis\n",
-                f"Mode: {mode}\n",
-                f"Provider: {provider or 'default'}\n",
-                f"Content length: {len(content)} chars\n",
-                "\n",
-                "## Analysis Result\n",
-                "This is a test analysis result.\n",
-                "Real analysis would appear here.\n"
-            ]
+            # 確保線程結束
+            thread.join(timeout=1)
+        
+        return result_generator()      
             
     async def analyze_with_cancellation(self,
                                       content: str,

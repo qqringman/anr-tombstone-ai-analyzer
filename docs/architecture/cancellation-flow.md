@@ -215,69 +215,118 @@ class AnthropicApiStreamingANRAnalyzer:
 ### 2. SSE 端點實作
 
 ```python
+# 可取消的分析 API (SSE)
 @app.route('/api/ai/analyze-with-cancellation', methods=['POST'])
-async def analyze_with_cancellation():
-    # 創建分析 ID
-    analysis_id = str(uuid.uuid4())
+def analyze_with_cancellation():
+    """可取消的分析 API（Server-Sent Events）"""
+    data = request.get_json()
     
-    # 創建取消令牌
-    token = await cancellation_manager.create_token(analysis_id)
+    # 從 POST body 獲取參數
+    content = data.get('content', '')
+    log_type = data.get('log_type', 'anr')
+    mode = data.get('mode', 'intelligent')
+    provider = data.get('provider', 'anthropic')
     
-    async def generate():
+    # 驗證必要參數
+    if not content:
+        return jsonify({
+            'status': 'error',
+            'message': 'Content is required'
+        }), 400
+    
+    # 檢查是否應該使用 mock 模式（用於測試）
+    use_mock = os.getenv('USE_MOCK_ANALYSIS', 'false').lower() == 'true'
+    
+    if use_mock:
+        # 使用 mock 版本
+        return analyze_with_cancellation_mock_impl(content, log_type, mode, provider)
+    
+    def generate():
+        """生成 SSE 事件流"""
+        import asyncio
+        from src.core.engine import CancellableAiAnalysisEngine, CancellationException
+        
+        analysis_id = str(uuid.uuid4())
+        
+        # 創建新的事件循環來運行異步代碼
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         try:
-            # 發送開始事件
-            yield format_sse_event({
-                'type': 'start',
-                'analysis_id': analysis_id,
-                'timestamp': datetime.utcnow().isoformat()
-            })
+            # 開始事件
+            yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
             
-            # 設置取消令牌
-            engine.set_cancellation_token(token)
+            # 獲取或創建分析引擎
+            engine = current_app.config.get('ANALYSIS_ENGINE')
+            if not engine:
+                # 如果沒有配置引擎，使用 mock 版本
+                print("Warning: Analysis engine not configured, falling back to mock")
+                loop.close()
+                return analyze_with_cancellation_mock_impl(content, log_type, mode, provider)
             
             # 執行分析
-            async for chunk in engine.analyze(...):
-                yield format_sse_event({
-                    'type': 'content',
-                    'content': chunk
-                })
-                
-                # 定期發送進度
-                if should_send_progress():
-                    yield format_sse_event({
-                        'type': 'progress',
-                        'progress': engine.get_progress()
-                    })
+            from src.config.base import AnalysisMode, ModelProvider
             
-            # 發送完成事件
-            yield format_sse_event({
-                'type': 'complete',
-                'tokens_used': engine.get_token_usage(),
-                'cost': engine.get_cost()
-            })
+            # 轉換參數
+            analysis_mode = AnalysisMode(mode)
+            model_provider = ModelProvider(provider) if provider else None
             
-        except asyncio.CancelledError:
-            # 發送取消事件
-            yield format_sse_event({
-                'type': 'cancelled',
-                'message': 'Analysis cancelled by user'
-            })
+            # 追蹤進度
+            chunk_count = 0
+            total_chunks = 1  # 初始值，實際會動態更新
+            
+            # 創建異步生成器的同步包裝
+            async def async_analyze():
+                async for chunk in engine.analyze_with_cancellation(
+                    content=content,
+                    log_type=log_type,
+                    mode=analysis_mode,
+                    provider=model_provider,
+                    analysis_id=analysis_id
+                ):
+                    yield chunk
+            
+            # 使用引擎分析
+            async_gen = async_analyze()
+            while True:
+                try:
+                    chunk = loop.run_until_complete(async_gen.__anext__())
+                    
+                    # 發送內容
+                    yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+                    
+                    # 更新進度
+                    chunk_count += 1
+                    progress = min(chunk_count * 10, 90)  # 最多到 90%
+                    
+                    # 獲取狀態
+                    status = engine.get_status()
+                    if 'api_usage' in status:
+                        api_usage = status['api_usage']
+                        yield f"data: {json.dumps({'type': 'progress', 'progress': {'progress_percentage': progress, 'current_chunk': chunk_count, 'total_chunks': total_chunks, 'input_tokens': api_usage.get('input_tokens', 0), 'output_tokens': api_usage.get('output_tokens', 0)}})}\n\n"
+                        
+                except StopAsyncIteration:
+                    break
+            
+            # 完成事件
+            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+            
+        except CancellationException:
+            yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
         except Exception as e:
-            # 發送錯誤事件
-            yield format_sse_event({
-                'type': 'error',
-                'error': str(e)
-            })
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+            import traceback
+            traceback.print_exc()
         finally:
-            # 清理令牌
-            await cancellation_manager.remove_token(analysis_id)
+            loop.close()
     
     return Response(
-        generate(),
+        generate(), 
         mimetype='text/event-stream',
         headers={
             'Cache-Control': 'no-cache',
-            'X-Analysis-ID': analysis_id
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive'
         }
     )
 ```
