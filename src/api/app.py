@@ -168,10 +168,13 @@ def analyze_with_cancellation():
         mode = data.get('mode', 'intelligent')
         provider = data.get('provider', 'anthropic')
         
+        # Token 統計
+        input_tokens = 0
+        output_tokens = 0
+        total_output = []
+        
         try:
-            # 直接使用同步 API 調用
             if provider == 'anthropic':
-                # 使用 Anthropic 同步 API
                 from anthropic import Anthropic
                 
                 api_key = os.getenv('ANTHROPIC_API_KEY')
@@ -180,44 +183,62 @@ def analyze_with_cancellation():
                 
                 client = Anthropic(api_key=api_key)
                 
-                # 構建提示詞
-                prompt = f"""你是一位 Android 系統專家，專門分析 {log_type.upper()} 問題。
-請分析以下日誌並提供詳細的分析報告。
-
-分析模式：{mode}
-
-日誌內容：
-{content[:4000]}  # 限制長度避免超過 token 限制
-
-請提供：
-1. 問題摘要
-2. 根本原因分析
-3. 解決方案
-4. 預防措施"""
+                # 根據模式選擇模型
+                model_map = {
+                    'quick': 'claude-3-haiku-20240307',
+                    'intelligent': 'claude-3-5-sonnet-20241022',
+                    'large_file': 'claude-3-5-sonnet-20241022',
+                    'max_token': 'claude-3-5-sonnet-20241022'
+                }
+                model = model_map.get(mode, 'claude-3-5-sonnet-20241022')
                 
-                # 同步調用 API
-                print("[DEBUG] Calling Anthropic API")
-                response = client.messages.create(
-                    model="claude-3-haiku-20240307",  # 使用較便宜的模型
-                    max_tokens=2000,
+                # 構建更專業的提示詞
+                prompt = self._build_professional_prompt(content, log_type, mode)
+                
+                # 確認正在使用 API
+                yield f"data: {json.dumps({'type': 'feedback', 'level': 'info', 'message': f'使用 Anthropic {model} 進行分析...'})}\n\n"
+                
+                print(f"[DEBUG] Calling Anthropic API with model: {model}")
+                
+                # 創建消息
+                message = client.messages.create(
+                    model=model,
+                    max_tokens=4000 if mode == 'max_token' else 2000,
+                    temperature=0.3,  # 降低溫度以獲得更一致的結果
                     messages=[
                         {
                             "role": "user",
                             "content": prompt
                         }
                     ],
-                    stream=True  # 使用流式響應
+                    stream=True
                 )
                 
-                # 流式發送響應
-                for chunk in response:
-                    if chunk.type == 'content_block_delta':
+                # 處理流式響應
+                for chunk in message:
+                    if chunk.type == 'message_start':
+                        # 獲取輸入 token 數
+                        if hasattr(chunk, 'message') and hasattr(chunk.message, 'usage'):
+                            input_tokens = chunk.message.usage.input_tokens
+                    
+                    elif chunk.type == 'content_block_delta':
                         text = chunk.delta.text
                         if text:
+                            total_output.append(text)
                             yield f"data: {json.dumps({'type': 'content', 'content': text})}\n\n"
+                    
+                    elif chunk.type == 'message_delta':
+                        # 獲取輸出 token 數
+                        if hasattr(chunk, 'usage'):
+                            output_tokens = chunk.usage.output_tokens
+                
+                # 如果沒有從流中獲取 token 數，估算它們
+                if input_tokens == 0:
+                    input_tokens = self._estimate_tokens(prompt)
+                if output_tokens == 0:
+                    output_tokens = self._estimate_tokens(''.join(total_output))
                 
             elif provider == 'openai':
-                # 使用 OpenAI 同步 API
                 from openai import OpenAI
                 
                 api_key = os.getenv('OPENAI_API_KEY')
@@ -226,43 +247,54 @@ def analyze_with_cancellation():
                 
                 client = OpenAI(api_key=api_key)
                 
-                # 構建提示詞
+                # 根據模式選擇模型
+                model_map = {
+                    'quick': 'gpt-3.5-turbo',
+                    'intelligent': 'gpt-4-turbo-preview',
+                    'large_file': 'gpt-4-turbo-preview',
+                    'max_token': 'gpt-4-turbo-preview'
+                }
+                model = model_map.get(mode, 'gpt-4-turbo-preview')
+                
+                # 構建消息
                 messages = [
                     {
                         "role": "system",
-                        "content": f"你是一位 Android 系統專家，專門分析 {log_type.upper()} 問題。請用繁體中文回答。"
+                        "content": self._get_system_prompt(log_type)
                     },
                     {
                         "role": "user",
-                        "content": f"""分析模式：{mode}
-
-日誌內容：
-{content[:4000]}
-
-請提供：
-1. 問題摘要
-2. 根本原因分析
-3. 解決方案
-4. 預防措施"""
+                        "content": self._build_professional_prompt(content, log_type, mode)
                     }
                 ]
                 
-                # 同步調用 API
-                print("[DEBUG] Calling OpenAI API")
+                yield f"data: {json.dumps({'type': 'feedback', 'level': 'info', 'message': f'使用 OpenAI {model} 進行分析...'})}\n\n"
+                
+                # 調用 API
                 response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
+                    model=model,
                     messages=messages,
+                    temperature=0.3,
                     stream=True
                 )
                 
-                # 流式發送響應
+                # 處理響應
                 for chunk in response:
                     if chunk.choices[0].delta.content:
-                        yield f"data: {json.dumps({'type': 'content', 'content': chunk.choices[0].delta.content})}\n\n"
+                        text = chunk.choices[0].delta.content
+                        total_output.append(text)
+                        yield f"data: {json.dumps({'type': 'content', 'content': text})}\n\n"
+                
+                # 估算 tokens
+                input_tokens = self._estimate_tokens(str(messages))
+                output_tokens = self._estimate_tokens(''.join(total_output))
             
-            else:
-                # 使用 Mock
-                raise Exception(f"Unknown provider: {provider}")
+            # 發送 token 統計
+            yield f"data: {json.dumps({'type': 'progress', 'progress': {'input_tokens': input_tokens, 'output_tokens': output_tokens, 'progress_percentage': 100}})}\n\n"
+            
+            # 計算成本
+            cost = self._calculate_cost(input_tokens, output_tokens, provider, mode)
+            yield f"data: {json.dumps({'type': 'feedback', 'level': 'info', 'message': f'分析完成！使用 {input_tokens} 輸入 tokens，{output_tokens} 輸出 tokens，預估成本：${cost:.4f}'})}\n\n"
             
             yield f"data: {json.dumps({'type': 'complete'})}\n\n"
             
@@ -271,27 +303,95 @@ def analyze_with_cancellation():
             import traceback
             traceback.print_exc()
             
-            # 錯誤時回退到 Mock
-            yield f"data: {json.dumps({'type': 'content', 'content': f'錯誤: {str(e)}\\n\\n使用模擬分析...\\n\\n'})}\n\n"
-            
-            # Mock 分析
-            mock_lines = [
-                f"# {log_type.upper()} 模擬分析報告",
-                "",
-                "## 問題摘要",
-                "由於 API 調用失敗，以下為模擬分析結果。",
-                "",
-                "## 建議",
-                "1. 檢查 API 密鑰是否正確設置",
-                "2. 確認網絡連接正常",
-                "3. 查看錯誤日誌獲取詳細信息"
-            ]
-            
-            for line in mock_lines:
-                yield f"data: {json.dumps({'type': 'content', 'content': line + '\\n'})}\n\n"
-                time.sleep(0.05)
-            
-            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+    
+    def _build_professional_prompt(self, content, log_type, mode):
+        """構建專業的提示詞"""
+        if log_type == 'anr':
+            base_prompt = """你是一位資深的 Android 系統工程師，專門分析 ANR (Application Not Responding) 問題。
+請分析以下 ANR 日誌，並提供詳細的技術分析報告。使用 Markdown 格式，包含程式碼範例。
+
+要求：
+1. 使用繁體中文
+2. 提供具體的程式碼範例
+3. 包含技術細節和最佳實踐
+4. 結構清晰，層次分明"""
+        else:
+            base_prompt = """你是一位資深的 Android Native 開發專家，專門分析 Tombstone (Native Crash) 問題。
+請分析以下崩潰日誌，並提供詳細的技術分析報告。使用 Markdown 格式，包含程式碼範例。
+
+要求：
+1. 使用繁體中文
+2. 提供 C/C++ 程式碼範例
+3. 包含記憶體分析和調試建議
+4. 結構清晰，層次分明"""
+        
+        # 根據模式調整分析深度
+        if mode == 'quick':
+            base_prompt += "\n\n請提供簡潔的分析（3-5個要點），重點解決問題。"
+        elif mode == 'intelligent':
+            base_prompt += "\n\n請提供全面的分析，包含問題診斷、解決方案和預防措施。"
+        elif mode == 'large_file':
+            base_prompt += "\n\n這是一個大型日誌文件，請進行深入分析，找出所有相關問題。"
+        elif mode == 'max_token':
+            base_prompt += "\n\n請提供最詳盡的分析，包含所有技術細節、多個解決方案、最佳實踐和案例。"
+        
+        # 添加日誌內容（限制長度）
+        max_content_length = {
+            'quick': 2000,
+            'intelligent': 4000,
+            'large_file': 8000,
+            'max_token': 12000
+        }.get(mode, 4000)
+        
+        truncated_content = content[:max_content_length]
+        if len(content) > max_content_length:
+            truncated_content += f"\n\n[註：日誌已截斷，原始長度 {len(content)} 字符]"
+        
+        return f"{base_prompt}\n\n日誌內容：\n```\n{truncated_content}\n```"
+    
+    def _get_system_prompt(self, log_type):
+        """獲取系統提示詞"""
+        if log_type == 'anr':
+            return """You are an expert Android system engineer specializing in ANR analysis. 
+You have deep knowledge of Android threading, Handler/Looper, and performance optimization.
+Always respond in Traditional Chinese (繁體中文) with technical accuracy."""
+        else:
+            return """You are an expert Android Native developer specializing in crash analysis.
+You have deep knowledge of C/C++, JNI, memory management, and debugging.
+Always respond in Traditional Chinese (繁體中文) with technical accuracy."""
+    
+    def _estimate_tokens(self, text):
+        """估算 token 數量"""
+        # 粗略估算：平均每個 token 約 4 個字符
+        return len(str(text)) // 4
+    
+    def _calculate_cost(self, input_tokens, output_tokens, provider, mode):
+        """計算成本"""
+        # 價格表（每 1K tokens）
+        prices = {
+            'anthropic': {
+                'claude-3-haiku-20240307': {'input': 0.00025, 'output': 0.00125},
+                'claude-3-5-sonnet-20241022': {'input': 0.003, 'output': 0.015}
+            },
+            'openai': {
+                'gpt-3.5-turbo': {'input': 0.0005, 'output': 0.0015},
+                'gpt-4-turbo-preview': {'input': 0.01, 'output': 0.03}
+            }
+        }
+        
+        # 根據模式獲取模型
+        if provider == 'anthropic':
+            model = 'claude-3-haiku-20240307' if mode == 'quick' else 'claude-3-5-sonnet-20241022'
+        else:
+            model = 'gpt-3.5-turbo' if mode == 'quick' else 'gpt-4-turbo-preview'
+        
+        price = prices.get(provider, {}).get(model, {'input': 0.01, 'output': 0.03})
+        
+        input_cost = (input_tokens / 1000) * price['input']
+        output_cost = (output_tokens / 1000) * price['output']
+        
+        return input_cost + output_cost
     
     return Response(
         generate(),

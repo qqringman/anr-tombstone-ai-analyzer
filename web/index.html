@@ -1263,7 +1263,9 @@
 
         // Update Progress
         function updateProgress(progress) {
-            const percent = progress.progress_percentage || 0;
+            if (!progress) return;
+            
+            const percent = progress.progress_percentage || progress.percentage || 0;
             document.getElementById('progressBar').style.width = `${percent}%`;
             document.getElementById('progressPercent').textContent = `${percent.toFixed(1)}%`;
             
@@ -1272,6 +1274,7 @@
                     `${progress.current_chunk}/${progress.total_chunks}`;
             }
             
+            // 更新 Token 統計
             if (progress.input_tokens !== undefined) {
                 document.getElementById('inputTokens').textContent = 
                     progress.input_tokens.toLocaleString();
