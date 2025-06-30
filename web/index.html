@@ -1084,7 +1084,6 @@
                 
                 // 清除之前的結果
                 clearResults();
-                
                 // 使用 POST 請求，將內容放在 body 中
                 fetch('/api/ai/analyze-with-cancellation', {
                     method: 'POST',
@@ -1152,9 +1151,10 @@
                     addStatusLog('開始分析', 'info');
                     break;
                     
-                case 'content':
-                    // Only append actual analysis content, not progress messages
-                    if (data.content && !data.content.includes('分析進度')) {
+                    case 'content':
+                    // Append all content without filtering
+                    if (data.content) {
+                        console.log('Received content:', data.content); // Debug log
                         analysisResults.content += data.content;
                         analysisResults.raw += data.content;
                         

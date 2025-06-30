@@ -160,6 +160,13 @@ def analyze_with_cancellation():
             'message': 'Content is required'
         }), 400
     
+    # 檢查是否應該使用 mock 模式（用於測試）
+    use_mock = os.getenv('USE_MOCK_ANALYSIS', 'false').lower() == 'true'
+    
+    if use_mock:
+        # 使用 mock 版本
+        return analyze_with_cancellation_mock_impl(content, log_type, mode, provider)
+    
     def generate():
         """生成 SSE 事件流"""
         import asyncio
@@ -176,12 +183,12 @@ def analyze_with_cancellation():
             yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
             
             # 獲取或創建分析引擎
-            engine = current_app.config.get('ANALYSIS_ENGINE')
+            engine = app.config.get('ANALYSIS_ENGINE')
             if not engine:
-                # 如果沒有配置引擎，創建一個新的
-                engine = CancellableAiAnalysisEngine()
-                loop.run_until_complete(engine.start())
-                current_app.config['ANALYSIS_ENGINE'] = engine
+                # 如果沒有配置引擎，使用 mock 版本
+                print("Warning: Analysis engine not configured, falling back to mock")
+                loop.close()
+                return analyze_with_cancellation_mock_impl(content, log_type, mode, provider)
             
             # 執行分析
             from src.config.base import AnalysisMode, ModelProvider
@@ -249,17 +256,9 @@ def analyze_with_cancellation():
         }
     )
 
-# 如果您想保留原本的測試版本，可以添加一個開發模式的路由
-@app.route('/api/ai/analyze-with-cancellation-mock', methods=['POST'])
-def analyze_with_cancellation_mock():
-    """模擬版本的分析 API（用於測試）"""
-    data = request.get_json()
-    print("aaaaaaaaaaaaaaaaaaa")
-    content = data.get('content', '')
-    log_type = data.get('log_type', 'anr')
-    mode = data.get('mode', 'intelligent')
-    provider = data.get('provider', 'anthropic')
-    
+def analyze_with_cancellation_mock_impl(content, log_type, mode, provider):
+    """Mock 實現用於測試"""
+
     def generate():
         """生成 SSE 事件流"""
         analysis_id = str(uuid.uuid4())
@@ -268,8 +267,7 @@ def analyze_with_cancellation_mock():
         yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
         
         # 模擬分析結果
-        # 使用 format 而不是 f-string 來避免大括號衝突
-        mock_content = """# {} 分析報告
+        mock_content = """# {log_type.upper()} 分析報告
 
 ## 問題摘要
 
@@ -303,7 +301,7 @@ synchronized (lock) {
 ## 結論
 
 請根據以上分析進行相應的優化。
-""".format(log_type.upper())
+"""
         
         # 分段發送內容
         lines = mock_content.split('\n')
