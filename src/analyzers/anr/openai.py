@@ -5,7 +5,7 @@ from typing import AsyncIterator, Optional
 import openai
 from openai import AsyncOpenAI
 
-from .base_anr import BaseANRAnalyzer
+from .base import BaseANRAnalyzer
 from ...config.base import AnalysisMode, ModelProvider
 from ...config.openai_config import OpenApiConfig
 from ...utils.status_manager import EnhancedStatusManager, MessageType

@@ -6,8 +6,8 @@ from typing import AsyncIterator, Optional
 from .base_wrapper import BaseAiLogWrapper
 from ..config.base import AnalysisMode, ModelProvider
 from ..config.openai_config import OpenApiConfig
-from ..analyzers.anr.openai_anr import OpenApiStreamingANRAnalyzer
-from ..analyzers.tombstone.openai_tombstone import OpenApiStreamingTombstoneAnalyzer
+from ..analyzers.anr.openai import OpenApiStreamingANRAnalyzer
+from ..analyzers.tombstone.openai import OpenApiStreamingTombstoneAnalyzer
 from ..utils.status_manager import EnhancedStatusManager
 from ..core.cancellation import CancellationToken
 

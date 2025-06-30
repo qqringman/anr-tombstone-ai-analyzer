@@ -6,8 +6,8 @@ from typing import AsyncIterator, Optional
 from .base_wrapper import BaseAiLogWrapper
 from ..config.base import AnalysisMode, ModelProvider
 from ..config.anthropic_config import AnthropicApiConfig
-from ..analyzers.anr.anthropic_anr import AnthropicApiStreamingANRAnalyzer
-from ..analyzers.tombstone.anthropic_tombstone import AnthropicApiStreamingTombstoneAnalyzer
+from ..analyzers.anr.anthropic import AnthropicApiStreamingANRAnalyzer
+from ..analyzers.tombstone.anthropic import AnthropicApiStreamingTombstoneAnalyzer
 from ..utils.status_manager import EnhancedStatusManager
 from ..core.cancellation import CancellationToken
 

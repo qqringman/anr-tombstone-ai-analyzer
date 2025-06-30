@@ -5,7 +5,7 @@ from typing import AsyncIterator, Dict, Optional
 import anthropic
 from anthropic import AsyncAnthropic
 
-from .base_tombstone import BaseTombstoneAnalyzer
+from .base import BaseTombstoneAnalyzer
 from ...config.base import AnalysisMode, ModelProvider
 from ...config.anthropic_config import AnthropicApiConfig
 from ...utils.status_manager import EnhancedStatusManager, MessageType

@@ -434,6 +434,42 @@
             line-height: 1.8;
         }
 
+        /* Markdown 內容樣式 */
+        .results-content h1, .results-content h2, .results-content h3 {
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+            color: var(--text-primary);
+        }
+
+        .results-content h1 { font-size: 1.5em; }
+        .results-content h2 { font-size: 1.3em; }
+        .results-content h3 { font-size: 1.1em; }
+
+        .results-content p {
+            margin-bottom: 1em;
+        }
+
+        .results-content ul, .results-content ol {
+            margin-left: 2em;
+            margin-bottom: 1em;
+        }
+
+        .results-content code {
+            background: #f4f4f4;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+
+        .results-content pre {
+            background: #282c34;
+            color: #abb2bf;
+            padding: 1em;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin-bottom: 1em;
+        }
+
         /* Status Messages */
         .status-message {
             padding: 12px 16px;
@@ -789,9 +825,9 @@
             </div>
 
             <div class="results-tabs">
-                <button class="tab active" onclick="switchTab('analysis')">分析報告</button>
-                <button class="tab" onclick="switchTab('raw')">原始輸出</button>
-                <button class="tab" onclick="switchTab('stats')">統計資訊</button>
+                <button class="tab active" data-tab="analysis">分析報告</button>
+                <button class="tab" data-tab="raw">原始輸出</button>
+                <button class="tab" data-tab="stats">統計資訊</button>
             </div>
 
             <div class="tab-content active" id="analysisTab">
@@ -837,10 +873,27 @@
             stats: {}
         };
 
+        // Model-based time estimates (minutes)
+        const modelTimeEstimates = {
+            anthropic: {
+                quick: { min: 0.5, max: 1 },
+                intelligent: { min: 2, max: 4 },
+                large_file: { min: 4, max: 8 },
+                max_token: { min: 8, max: 15 }
+            },
+            openai: {
+                quick: { min: 1, max: 2 },
+                intelligent: { min: 3, max: 5 },
+                large_file: { min: 5, max: 10 },
+                max_token: { min: 10, max: 20 }
+            }
+        };
+
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             setupDropZone();
             setupEventListeners();
+            setupTabSwitching();
             checkApiStatus();
         });
 
@@ -954,7 +1007,7 @@
             document.getElementById('estimatedTokens').textContent = tokens.toLocaleString();
         }
 
-        // Cost Estimation
+        // Cost Estimation with model-based time
         async function updateCostEstimation() {
             if (!currentFile) return;
 
@@ -968,13 +1021,13 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         file_size_kb: fileSizeKB,
-                        mode: mode
+                        mode: mode,
+                        provider: provider
                     })
                 });
 
                 const data = await response.json();
                 
-                // 修正：使用正確的資料結構
                 if (data.status === 'success' && data.data) {
                     const costData = data.data;
                     
@@ -987,9 +1040,16 @@
                         const estimate = providerEstimates[0];
                         document.getElementById('estimatedCost').textContent = 
                             `$${estimate.total_cost.toFixed(2)}`;
-                        document.getElementById('estimatedTime').textContent = 
-                            `${estimate.analysis_time_minutes.toFixed(1)} 分鐘`;
                     }
+
+                    // 使用模型特定的時間估算
+                    const timeEstimate = modelTimeEstimates[provider][mode];
+                    const fileSizeFactor = Math.max(1, fileSizeKB / 1024); // MB
+                    const estimatedMinutes = timeEstimate.min * fileSizeFactor;
+                    const maxMinutes = Math.min(timeEstimate.max * fileSizeFactor, 30); // Cap at 30 minutes
+                    
+                    document.getElementById('estimatedTime').textContent = 
+                        `${estimatedMinutes.toFixed(1)}-${maxMinutes.toFixed(1)} 分鐘`;
 
                     // 更新推薦模式
                     document.getElementById('recommendedMode').textContent = 
@@ -1000,9 +1060,9 @@
             } catch (error) {
                 console.error('Cost estimation error:', error);
             }
-        }        
+        }
 
-        // Start Analysis
+        // Start Analysis - Modified to use POST body
         async function startAnalysis() {
             if (!currentFile) return;
 
@@ -1081,31 +1141,10 @@
             reader.readAsText(currentFile);
         }
 
-        // SSE Connection
-        function startSSEConnection(content, logType, mode, provider) {
-            const params = new URLSearchParams({
-                content: content,
-                log_type: logType,
-                mode: mode,
-                provider: provider
-            });
-
-            eventSource = new EventSource(`/api/ai/analyze-with-cancellation?${params}`);
-            
-            eventSource.onmessage = function(event) {
-                const data = JSON.parse(event.data);
-                handleSSEMessage(data);
-            };
-
-            eventSource.onerror = function(error) {
-                console.error('SSE error:', error);
-                showMessage('連接錯誤，請重試', 'error');
-                stopAnalysis();
-            };
-        }
-
-        // Handle SSE Messages
+        // Handle SSE Messages - Fixed content handling
         function handleSSEMessage(data) {
+            console.log('SSE Message:', data); // Debug log
+            
             switch (data.type) {
                 case 'start':
                     analysisId = data.analysis_id;
@@ -1114,12 +1153,19 @@
                     break;
                     
                 case 'content':
-                    // Append content
-                    analysisResults.content += data.content;
-                    analysisResults.raw += data.content;
-                    
-                    // Update display
-                    updateResultsDisplay();
+                    // Only append actual analysis content, not progress messages
+                    if (data.content && !data.content.includes('分析進度')) {
+                        analysisResults.content += data.content;
+                        analysisResults.raw += data.content;
+                        
+                        // Update display in real-time
+                        updateResultsDisplay();
+                        
+                        // Auto show results section when content starts coming
+                        if (!document.getElementById('resultsSection').classList.contains('active')) {
+                            document.getElementById('resultsSection').classList.add('active');
+                        }
+                    }
                     break;
                     
                 case 'progress':
@@ -1127,13 +1173,16 @@
                     break;
                     
                 case 'feedback':
-                    handleFeedback(data.feedback);
+                    if (data.level && data.message) {
+                        handleFeedback(data);
+                    }
                     break;
                     
                 case 'complete':
                     showMessage('分析完成！', 'success');
                     stopAnalysis();
-                    showResults();
+                    // Don't scroll here - already visible
+                    generateStatistics();
                     break;
                     
                 case 'cancelled':
@@ -1186,17 +1235,17 @@
             document.getElementById('progressBar').style.width = `${percent}%`;
             document.getElementById('progressPercent').textContent = `${percent.toFixed(1)}%`;
             
-            if (progress.processed_chunks !== undefined) {
+            if (progress.current_chunk !== undefined && progress.total_chunks !== undefined) {
                 document.getElementById('processedChunks').textContent = 
-                    `${progress.processed_chunks}/${progress.total_chunks}`;
+                    `${progress.current_chunk}/${progress.total_chunks}`;
             }
             
-            if (progress.input_tokens) {
+            if (progress.input_tokens !== undefined) {
                 document.getElementById('inputTokens').textContent = 
                     progress.input_tokens.toLocaleString();
             }
             
-            if (progress.output_tokens) {
+            if (progress.output_tokens !== undefined) {
                 document.getElementById('outputTokens').textContent = 
                     progress.output_tokens.toLocaleString();
             }
@@ -1204,39 +1253,44 @@
 
         // Handle Feedback
         function handleFeedback(feedback) {
-            const type = feedback.type;
-            const message = feedback.message;
+            const type = feedback.type || 'info';
+            const message = feedback.message || '';
             
             showMessage(message, type);
             addStatusLog(message, type);
         }
 
-        // Update Results Display
+        // Update Results Display - Fixed markdown rendering
         function updateResultsDisplay() {
-            // Parse markdown to HTML
-            const html = marked.parse(analysisResults.content);
-            document.getElementById('analysisContent').innerHTML = html;
-            
-            // Update raw content
-            document.getElementById('rawContent').textContent = analysisResults.raw;
-            
-            // Syntax highlighting
-            Prism.highlightAllUnder(document.getElementById('analysisContent'));
-        }
-
-        // Show Results
-        function showResults() {
-            document.getElementById('resultsSection').classList.add('active');
-            
-            // Generate statistics
-            generateStatistics();
-            
-            // Scroll to results
-            document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+            try {
+                // Parse markdown to HTML
+                if (window.marked) {
+                    const html = marked.parse(analysisResults.content);
+                    document.getElementById('analysisContent').innerHTML = html;
+                } else {
+                    // Fallback: display as text
+                    document.getElementById('analysisContent').textContent = analysisResults.content;
+                }
+                
+                // Update raw content
+                document.getElementById('rawContent').textContent = analysisResults.raw;
+                
+                // Syntax highlighting if available
+                if (window.Prism) {
+                    Prism.highlightAllUnder(document.getElementById('analysisContent'));
+                }
+            } catch (error) {
+                console.error('Error updating results:', error);
+                document.getElementById('analysisContent').textContent = analysisResults.content;
+            }
         }
 
         // Generate Statistics
         function generateStatistics() {
+            // Get token values
+            const inputTokens = parseInt(document.getElementById('inputTokens').textContent.replace(/,/g, '')) || 0;
+            const outputTokens = parseInt(document.getElementById('outputTokens').textContent.replace(/,/g, '')) || 0;
+            
             // Token usage chart
             const tokenCtx = document.getElementById('tokenChart').getContext('2d');
             new Chart(tokenCtx, {
@@ -1244,10 +1298,7 @@
                 data: {
                     labels: ['輸入 Tokens', '輸出 Tokens'],
                     datasets: [{
-                        data: [
-                            parseInt(document.getElementById('inputTokens').textContent) || 0,
-                            parseInt(document.getElementById('outputTokens').textContent) || 0
-                        ],
+                        data: [inputTokens, outputTokens],
                         backgroundColor: ['#3b82f6', '#10b981']
                     }]
                 },
@@ -1258,14 +1309,34 @@
             });
         }
 
-        // Tab Switching
+        // Tab Switching Setup
+        function setupTabSwitching() {
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    const tabName = this.getAttribute('data-tab');
+                    switchTab(tabName);
+                });
+            });
+        }
+
+        // Tab Switching - Fixed to prevent event bubbling
         function switchTab(tabName) {
             // Update tabs
-            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+                if (tab.getAttribute('data-tab') === tabName) {
+                    tab.classList.add('active');
+                }
+            });
             
-            // Activate selected tab
-            event.target.classList.add('active');
+            // Update content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
             document.getElementById(`${tabName}Tab`).classList.add('active');
         }
 
@@ -1328,6 +1399,10 @@
             document.getElementById('rawContent').textContent = '';
             document.getElementById('statusMessages').innerHTML = '';
             document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressPercent').textContent = '0%';
+            document.getElementById('processedChunks').textContent = '0/0';
+            document.getElementById('inputTokens').textContent = '0';
+            document.getElementById('outputTokens').textContent = '0';
         }
 
         function downloadResults() {
@@ -1359,7 +1434,7 @@
                     addStatusLog('系統狀態異常', 'warning');
                 }
             } catch (error) {
-                addStatusLog('無法連接到伺服器:'+error, 'error');
+                addStatusLog('無法連接到伺服器', 'error');
             }
         }
 
@@ -1383,7 +1458,7 @@
                 if (confirm) {
                     analysisResults = data.results;
                     updateResultsDisplay();
-                    showResults();
+                    document.getElementById('resultsSection').classList.add('active');
                 }
             }
         });

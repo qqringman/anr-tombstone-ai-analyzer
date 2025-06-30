@@ -5,7 +5,7 @@ from typing import AsyncIterator, Optional, Dict, Any
 import openai
 from openai import AsyncOpenAI
 
-from .base_tombstone import BaseTombstoneAnalyzer
+from .base import BaseTombstoneAnalyzer
 from ...config.base import AnalysisMode, ModelProvider
 from ...config.openai_config import OpenApiConfig
 from ...utils.status_manager import EnhancedStatusManager, MessageType

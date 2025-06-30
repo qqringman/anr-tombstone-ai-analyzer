@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Dict, Optional
 import anthropic
 from anthropic import AsyncAnthropic
 
-from .base_anr import BaseANRAnalyzer
+from .base import BaseANRAnalyzer
 from ...config.base import AnalysisMode, ModelProvider
 from ...config.anthropic_config import AnthropicApiConfig
 from ...utils.status_manager import EnhancedStatusManager, MessageType

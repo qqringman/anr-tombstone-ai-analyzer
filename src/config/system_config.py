@@ -5,7 +5,7 @@ import os
 from typing import Dict, Optional, Any
 from pathlib import Path
 import yaml
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from dotenv import load_dotenv
 
 from .base import (
@@ -22,11 +22,11 @@ class ApiKeys(BaseModel):
     anthropic: Optional[str] = Field(None, description="Anthropic API Key")
     openai: Optional[str] = Field(None, description="OpenAI API Key")
     
-    @validator('anthropic', 'openai', pre=True)
-    def load_from_env(cls, v, field):
+    @field_validator('anthropic', 'openai', mode='before')
+    def load_from_env(cls, v, info):
         """從環境變數載入 API Key"""
         if v is None:
-            env_key = f"{field.name.upper()}_API_KEY"
+            env_key = f"{info.field_name.upper()}_API_KEY"
             v = os.getenv(env_key)
         return v
 
@@ -36,13 +36,19 @@ class SystemInfo(BaseModel):
     version: str = "1.0.0"
     environment: str = Field("development", description="development, staging, production")
     
-    @validator('environment', pre=True)
+    @field_validator('environment', mode='before')
     def load_environment(cls, v):
         """從環境變數載入環境設定"""
         return os.getenv('ENVIRONMENT', v)
 
 class SystemConfig(BaseModel):
     """完整系統配置"""
+    # Pydantic v2 配置
+    model_config = ConfigDict(
+        validate_assignment=True,
+        use_enum_values=True
+    )
+    
     system: SystemInfo = Field(default_factory=SystemInfo)
     api_keys: ApiKeys = Field(default_factory=ApiKeys)
     limits: SystemLimits = Field(default_factory=SystemLimits)
@@ -102,7 +108,7 @@ class SystemConfig(BaseModel):
     
     def to_yaml(self, output_path: str):
         """將配置保存為 YAML 檔案"""
-        config_dict = self.dict(exclude_unset=True)
+        config_dict = self.model_dump(exclude_unset=True)
         
         # 移除敏感資訊
         if 'api_keys' in config_dict:
@@ -153,11 +159,6 @@ class SystemConfig(BaseModel):
     def is_development(self) -> bool:
         """是否為開發環境"""
         return self.system.environment == "development"
-    
-    class Config:
-        """Pydantic 配置"""
-        validate_assignment = True
-        use_enum_values = True
 
 # 全局配置實例
 _global_config: Optional[SystemConfig] = None

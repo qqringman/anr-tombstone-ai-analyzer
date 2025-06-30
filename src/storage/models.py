@@ -43,8 +43,8 @@ class AnalysisRecord(Base):
     status = Column(String(20), default='pending')  # pending/running/completed/failed/cancelled
     error_message = Column(Text)
     
-    # 元資料
-    metadata = Column(JSON)
+    # 元資料 - 改名以避免與 SQLAlchemy 的 metadata 屬性衝突
+    analysis_metadata = Column('metadata', JSON)  # Python 屬性名改為 analysis_metadata，但資料庫欄位名仍是 metadata
     
     # 索引
     __table_args__ = (
@@ -71,7 +71,7 @@ class AnalysisRecord(Base):
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
             'duration_seconds': self.duration_seconds,
             'error_message': self.error_message,
-            'metadata': self.metadata
+            'metadata': self.analysis_metadata  # 注意這裡仍然輸出為 'metadata' 以保持 API 一致性
         }
 
 class CostTracking(Base):

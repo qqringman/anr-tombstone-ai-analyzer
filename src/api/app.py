@@ -147,7 +147,114 @@ def analyze_with_cancellation():
     """可取消的分析 API（Server-Sent Events）"""
     data = request.get_json()
     
-    # 從 POST body 獲取參數，而不是從 URL
+    # 從 POST body 獲取參數
+    content = data.get('content', '')
+    log_type = data.get('log_type', 'anr')
+    mode = data.get('mode', 'intelligent')
+    provider = data.get('provider', 'anthropic')
+    
+    # 驗證必要參數
+    if not content:
+        return jsonify({
+            'status': 'error',
+            'message': 'Content is required'
+        }), 400
+    
+    def generate():
+        """生成 SSE 事件流"""
+        import asyncio
+        from src.core.engine import CancellableAiAnalysisEngine, CancellationException
+        
+        analysis_id = str(uuid.uuid4())
+        
+        # 創建新的事件循環來運行異步代碼
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            # 開始事件
+            yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
+            
+            # 獲取或創建分析引擎
+            engine = current_app.config.get('ANALYSIS_ENGINE')
+            if not engine:
+                # 如果沒有配置引擎，創建一個新的
+                engine = CancellableAiAnalysisEngine()
+                loop.run_until_complete(engine.start())
+                current_app.config['ANALYSIS_ENGINE'] = engine
+            
+            # 執行分析
+            from src.config.base import AnalysisMode, ModelProvider
+            
+            # 轉換參數
+            analysis_mode = AnalysisMode(mode)
+            model_provider = ModelProvider(provider) if provider else None
+            
+            # 追蹤進度
+            chunk_count = 0
+            total_chunks = 1  # 初始值，實際會動態更新
+            
+            # 創建異步生成器的同步包裝
+            async def async_analyze():
+                async for chunk in engine.analyze_with_cancellation(
+                    content=content,
+                    log_type=log_type,
+                    mode=analysis_mode,
+                    provider=model_provider,
+                    analysis_id=analysis_id
+                ):
+                    yield chunk
+            
+            # 使用引擎分析
+            async_gen = async_analyze()
+            while True:
+                try:
+                    chunk = loop.run_until_complete(async_gen.__anext__())
+                    
+                    # 發送內容
+                    yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+                    
+                    # 更新進度
+                    chunk_count += 1
+                    progress = min(chunk_count * 10, 90)  # 最多到 90%
+                    
+                    # 獲取狀態
+                    status = engine.get_status()
+                    if 'api_usage' in status:
+                        api_usage = status['api_usage']
+                        yield f"data: {json.dumps({'type': 'progress', 'progress': {'progress_percentage': progress, 'current_chunk': chunk_count, 'total_chunks': total_chunks, 'input_tokens': api_usage.get('input_tokens', 0), 'output_tokens': api_usage.get('output_tokens', 0)}})}\n\n"
+                        
+                except StopAsyncIteration:
+                    break
+            
+            # 完成事件
+            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+            
+        except CancellationException:
+            yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+            import traceback
+            traceback.print_exc()
+        finally:
+            loop.close()
+    
+    return Response(
+        generate(), 
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive'
+        }
+    )
+
+# 如果您想保留原本的測試版本，可以添加一個開發模式的路由
+@app.route('/api/ai/analyze-with-cancellation-mock', methods=['POST'])
+def analyze_with_cancellation_mock():
+    """模擬版本的分析 API（用於測試）"""
+    data = request.get_json()
+    print("aaaaaaaaaaaaaaaaaaa")
     content = data.get('content', '')
     log_type = data.get('log_type', 'anr')
     mode = data.get('mode', 'intelligent')
@@ -160,24 +267,82 @@ def analyze_with_cancellation():
         # 開始事件
         yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
         
-        # 模擬分析過程
-        total_chunks = 10
-        for i in range(total_chunks):
-            # 進度更新
-            progress = ((i + 1) / total_chunks) * 100
-            yield f"data: {json.dumps({'type': 'progress', 'progress': {'progress_percentage': progress, 'current_chunk': i + 1, 'total_chunks': total_chunks}})}\n\n"
+        # 模擬分析結果
+        # 使用 format 而不是 f-string 來避免大括號衝突
+        mock_content = """# {} 分析報告
+
+## 問題摘要
+
+這是一個模擬的分析結果。在實際使用中，這裡會顯示：
+
+1. **根本原因分析**
+   - 主線程阻塞位置
+   - 相關線程狀態
+   - 資源競爭情況
+
+2. **詳細解決方案**
+   - 短期修復建議
+   - 長期優化策略
+   - 程式碼範例
+
+3. **預防措施**
+   - 監控建議
+   - 最佳實踐
+
+## 技術細節
+
+根據日誌分析，主要問題出現在...
+
+```java
+// 範例程式碼
+synchronized (lock) {
+    // 避免在主線程執行耗時操作
+}
+```
+
+## 結論
+
+請根據以上分析進行相應的優化。
+""".format(log_type.upper())
+        
+        # 分段發送內容
+        lines = mock_content.split('\n')
+        total_lines = len(lines)
+        
+        for i, line in enumerate(lines):
+            # 發送內容
+            content_data = {'type': 'content', 'content': line + '\n'}
+            yield f"data: {json.dumps(content_data)}\n\n"
             
-            # 內容片段
-            content_chunk = f'\n## 分析進度 {i+1}/{total_chunks}\n\n正在分析 {log_type.upper()} 日誌...\n'
-            yield f"data: {json.dumps({'type': 'content', 'content': content_chunk})}\n\n"
+            # 更新進度
+            progress = ((i + 1) / total_lines) * 100
+            progress_data = {
+                'type': 'progress',
+                'progress': {
+                    'progress_percentage': progress,
+                    'current_chunk': i + 1,
+                    'total_chunks': total_lines,
+                    'input_tokens': 1000 + i * 10,
+                    'output_tokens': 500 + i * 5
+                }
+            }
+            yield f"data: {json.dumps(progress_data)}\n\n"
             
             import time
-            time.sleep(0.5)  # 模擬處理時間
+            time.sleep(0.1)  # 模擬處理時間
         
         # 完成事件
         yield f"data: {json.dumps({'type': 'complete'})}\n\n"
     
-    return Response(generate(), mimetype='text/event-stream')
+    return Response(
+        generate(), 
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive'
+        }
+    )
 
 # 取消分析
 @app.route('/api/ai/cancel-analysis/<analysis_id>', methods=['POST'])
@@ -361,6 +526,14 @@ if __name__ == '__main__':
     port = int(os.getenv('API_PORT', 5000))
     debug = os.getenv('ENVIRONMENT') == 'development'
     
+    # 初始化分析引擎
+    from src.core.engine import CancellableAiAnalysisEngine
+    import asyncio
+    
+    engine = CancellableAiAnalysisEngine()
+    asyncio.run(engine.start())
+    app.config['ANALYSIS_ENGINE'] = engine
+
     print(f"""
     ==========================================
     ANR/Tombstone AI Analyzer API Server
