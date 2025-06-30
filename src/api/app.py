@@ -144,46 +144,164 @@ def analyze_basic():
 # 可取消的分析 API (SSE)
 import concurrent.futures
 import threading
+import asyncio
+import threading
+from queue import Queue, Empty
+from concurrent.futures import ThreadPoolExecutor
+
+# 創建線程池
+executor = ThreadPoolExecutor(max_workers=5)
 
 @app.route('/api/ai/analyze-with-cancellation', methods=['POST'])
 def analyze_with_cancellation():
     data = request.get_json()
     
     def generate():
+        import time
+        import os
+        
         analysis_id = str(uuid.uuid4())
         yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
         
-        # 直接使用 mock 數據避免異步問題
-        mock_content = """# ANR 分析報告
-
-## 問題摘要
-主線程被阻塞，應用程式無回應。
-
-## 根本原因
-從堆疊追蹤可以看出，主線程在執行同步 I/O 操作時被阻塞。
-
-## 解決方案
-1. **短期修復**：將 I/O 操作移至背景線程
-2. **長期優化**：使用異步 I/O 或協程
-3. **監控建議**：添加 ANR 監控機制
-
-## 程式碼範例
-```java
-// 避免在主線程執行
-new Thread(() -> {
-    // I/O 操作
-}).start();
-```"""
+        content = data.get('content', '')
+        log_type = data.get('log_type', 'anr')
+        mode = data.get('mode', 'intelligent')
+        provider = data.get('provider', 'anthropic')
         
-        # 逐行發送
-        for line in mock_content.split('\n'):
-            yield f"data: {json.dumps({'type': 'content', 'content': line + '\\n'})}\n\n"
-            import time
-            time.sleep(0.05)  # 模擬處理時間
-        
-        yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+        try:
+            # 直接使用同步 API 調用
+            if provider == 'anthropic':
+                # 使用 Anthropic 同步 API
+                from anthropic import Anthropic
+                
+                api_key = os.getenv('ANTHROPIC_API_KEY')
+                if not api_key:
+                    raise Exception("Anthropic API key not found")
+                
+                client = Anthropic(api_key=api_key)
+                
+                # 構建提示詞
+                prompt = f"""你是一位 Android 系統專家，專門分析 {log_type.upper()} 問題。
+請分析以下日誌並提供詳細的分析報告。
+
+分析模式：{mode}
+
+日誌內容：
+{content[:4000]}  # 限制長度避免超過 token 限制
+
+請提供：
+1. 問題摘要
+2. 根本原因分析
+3. 解決方案
+4. 預防措施"""
+                
+                # 同步調用 API
+                print("[DEBUG] Calling Anthropic API")
+                response = client.messages.create(
+                    model="claude-3-haiku-20240307",  # 使用較便宜的模型
+                    max_tokens=2000,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    stream=True  # 使用流式響應
+                )
+                
+                # 流式發送響應
+                for chunk in response:
+                    if chunk.type == 'content_block_delta':
+                        text = chunk.delta.text
+                        if text:
+                            yield f"data: {json.dumps({'type': 'content', 'content': text})}\n\n"
+                
+            elif provider == 'openai':
+                # 使用 OpenAI 同步 API
+                from openai import OpenAI
+                
+                api_key = os.getenv('OPENAI_API_KEY')
+                if not api_key:
+                    raise Exception("OpenAI API key not found")
+                
+                client = OpenAI(api_key=api_key)
+                
+                # 構建提示詞
+                messages = [
+                    {
+                        "role": "system",
+                        "content": f"你是一位 Android 系統專家，專門分析 {log_type.upper()} 問題。請用繁體中文回答。"
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""分析模式：{mode}
+
+日誌內容：
+{content[:4000]}
+
+請提供：
+1. 問題摘要
+2. 根本原因分析
+3. 解決方案
+4. 預防措施"""
+                    }
+                ]
+                
+                # 同步調用 API
+                print("[DEBUG] Calling OpenAI API")
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=messages,
+                    stream=True
+                )
+                
+                # 流式發送響應
+                for chunk in response:
+                    if chunk.choices[0].delta.content:
+                        yield f"data: {json.dumps({'type': 'content', 'content': chunk.choices[0].delta.content})}\n\n"
+            
+            else:
+                # 使用 Mock
+                raise Exception(f"Unknown provider: {provider}")
+            
+            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+            
+        except Exception as e:
+            print(f"[DEBUG] API Error: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # 錯誤時回退到 Mock
+            yield f"data: {json.dumps({'type': 'content', 'content': f'錯誤: {str(e)}\\n\\n使用模擬分析...\\n\\n'})}\n\n"
+            
+            # Mock 分析
+            mock_lines = [
+                f"# {log_type.upper()} 模擬分析報告",
+                "",
+                "## 問題摘要",
+                "由於 API 調用失敗，以下為模擬分析結果。",
+                "",
+                "## 建議",
+                "1. 檢查 API 密鑰是否正確設置",
+                "2. 確認網絡連接正常",
+                "3. 查看錯誤日誌獲取詳細信息"
+            ]
+            
+            for line in mock_lines:
+                yield f"data: {json.dumps({'type': 'content', 'content': line + '\\n'})}\n\n"
+                time.sleep(0.05)
+            
+            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
     
-    return Response(generate(), mimetype='text/event-stream')
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive'
+        }
+    )
 
 def analyze_with_cancellation_mock_impl(content, log_type, mode, provider):
     """Mock 實現用於測試"""

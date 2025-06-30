@@ -553,6 +553,8 @@
             grid-template-columns: 1fr 1fr;
             gap: 24px;
             margin-top: 24px;
+            max-height: 600px;
+            overflow-y: auto;
         }
 
         .chart-card {
@@ -560,6 +562,7 @@
             border-radius: 8px;
             padding: 16px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            height: fit-content;
         }
 
         .chart-card h4 {
@@ -567,6 +570,10 @@
             color: var(--text-primary);
         }
 
+        /* 確保 canvas 有固定高度 */
+        .chart-card canvas {
+            max-height: 300px !important;
+        }
         /* Status Panel */
         .status-panel {
             position: fixed;
@@ -839,14 +846,18 @@
             </div>
 
             <div class="tab-content" id="statsTab">
-                <div class="charts-container">
+                <div class="charts-container" style="max-height: 600px; overflow-y: auto;">
                     <div class="chart-card">
                         <h4>Token 使用統計</h4>
-                        <canvas id="tokenChart"></canvas>
+                        <div style="height: 300px; position: relative;">
+                            <canvas id="tokenChart"></canvas>
+                        </div>
                     </div>
                     <div class="chart-card">
                         <h4>成本分析</h4>
-                        <canvas id="costChart"></canvas>
+                        <div style="height: 300px; position: relative;">
+                            <canvas id="costChart"></canvas>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1162,50 +1173,59 @@
             console.log('[DEBUG] Message type:', data.type);
             console.log('[DEBUG] Current results length:', analysisResults.content.length);
             
-            switch (data.type) {
-                case 'content':
-                    console.log('[DEBUG] Content to append:', data.content);
-                    if (data.content) {
-                        analysisResults.content += data.content;
-                        analysisResults.raw += data.content;
-                        console.log('[DEBUG] Total content length now:', analysisResults.content.length);
-                        
-                        // 立即更新顯示
-                        updateResultsDisplay();
-                        
-                        // 確保結果區域可見
-                        if (!document.getElementById('resultsSection').classList.contains('active')) {
-                            document.getElementById('resultsSection').classList.add('active');
+            try {
+                switch (data.type) {
+                    case 'start':
+                        if (data.analysis_id) {
+                            document.getElementById('analysisId').textContent = `ID: ${data.analysis_id}`;
                         }
-                    }
-                    break;
-                    
-                case 'progress':
-                    updateProgress(data.progress);
-                    break;
-                    
-                case 'feedback':
-                    if (data.level && data.message) {
-                        handleFeedback(data);
-                    }
-                    break;
-                    
-                case 'complete':
-                    showMessage('分析完成！', 'success');
-                    stopAnalysis();
-                    // Don't scroll here - already visible
-                    generateStatistics();
-                    break;
-                    
-                case 'cancelled':
-                    showMessage('分析已取消', 'warning');
-                    stopAnalysis();
-                    break;
-                    
-                case 'error':
-                    showMessage(`錯誤: ${data.error}`, 'error');
-                    stopAnalysis();
-                    break;
+                        break;
+                        
+                    case 'content':
+                        console.log('[DEBUG] Content to append:', data.content);
+                        if (data.content) {
+                            analysisResults.content += data.content;
+                            analysisResults.raw += data.content;
+                            console.log('[DEBUG] Total content length now:', analysisResults.content.length);
+                            
+                            // 立即更新顯示
+                            updateResultsDisplay();
+                            
+                            // 確保結果區域可見
+                            if (!document.getElementById('resultsSection').classList.contains('active')) {
+                                document.getElementById('resultsSection').classList.add('active');
+                            }
+                        }
+                        break;
+                        
+                    case 'progress':
+                        updateProgress(data.progress);
+                        break;
+                        
+                    case 'feedback':
+                        if (data.level && data.message) {
+                            handleFeedback(data);
+                        }
+                        break;
+                        
+                    case 'complete':
+                        showMessage('分析完成！', 'success');
+                        stopAnalysis();
+                        generateStatistics();
+                        break;
+                        
+                    case 'cancelled':
+                        showMessage('分析已取消', 'warning');
+                        stopAnalysis();
+                        break;
+                        
+                    case 'error':
+                        showMessage(`錯誤: ${data.error}`, 'error');
+                        stopAnalysis();
+                        break;
+                }
+            } catch (error) {
+                console.error('[DEBUG] Error handling SSE message:', error);
             }
         }
 
@@ -1304,21 +1324,78 @@
             const outputTokens = parseInt(document.getElementById('outputTokens').textContent.replace(/,/g, '')) || 0;
             
             // Token usage chart
-            const tokenCtx = document.getElementById('tokenChart').getContext('2d');
-            new Chart(tokenCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['輸入 Tokens', '輸出 Tokens'],
-                    datasets: [{
-                        data: [inputTokens, outputTokens],
-                        backgroundColor: ['#3b82f6', '#10b981']
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false
+            const tokenCanvas = document.getElementById('tokenChart');
+            if (tokenCanvas) {
+                // 銷毀已存在的圖表
+                const existingChart = Chart.getChart(tokenCanvas);
+                if (existingChart) {
+                    existingChart.destroy();
                 }
-            });
+                
+                const tokenCtx = tokenCanvas.getContext('2d');
+                new Chart(tokenCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['輸入 Tokens', '輸出 Tokens'],
+                        datasets: [{
+                            data: [inputTokens, outputTokens],
+                            backgroundColor: ['#3b82f6', '#10b981']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom'
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Cost chart (如果需要)
+            const costCanvas = document.getElementById('costChart');
+            if (costCanvas) {
+                // 銷毀已存在的圖表
+                const existingChart = Chart.getChart(costCanvas);
+                if (existingChart) {
+                    existingChart.destroy();
+                }
+                
+                // 簡單的成本圖表
+                const costCtx = costCanvas.getContext('2d');
+                new Chart(costCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: ['預估成本', '實際成本'],
+                        datasets: [{
+                            label: '成本 (USD)',
+                            data: [0.5, 0.3], // 示例數據
+                            backgroundColor: ['#f59e0b', '#10b981']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(2);
+                                    }
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        }
+                    }
+                });
+            }
         }
 
         // Tab Switching Setup

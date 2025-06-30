@@ -331,7 +331,7 @@ class CancellableAiAnalysisEngine(AiAnalysisEngine):
         super().__init__(config_path)
         self.cancellation_manager = get_cancellation_manager()
         self._active_analyses: Dict[str, CancellationToken] = {}
-    
+
     async def analyze_with_cancellation(self,
                                       content: str,
                                       log_type: str,
