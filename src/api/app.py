@@ -198,200 +198,107 @@ def analyze_with_cancellation():
     
     def generate():
         """生成 SSE 事件流"""
-        import asyncio
-        import threading
-        from queue import Queue
-        
-        # 使用隊列來收集消息
-        message_queue = Queue()
-        error_occurred = threading.Event()
-        
-        def run_in_thread():
-            """在新線程中運行異步代碼"""
-            # 創建新的事件循環
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            async def async_analyze():
-                try:
-                    # 測試內容
-                    message_queue.put("# 測試分析\n\n")
-                    
-                    # 獲取引擎
-                    engine = app.config.get('ANALYSIS_ENGINE')
-                    
-                    if engine:
-                        print(f"[DEBUG] Engine found, starting analysis")
-                        
-                        # 導入必要的類
-                        try:
-                            from src.config.base import AnalysisMode, ModelProvider
-                            analysis_mode = AnalysisMode(mode)
-                            model_provider = ModelProvider(provider) if provider else None
-                        except Exception as e:
-                            print(f"[DEBUG] Import error: {e}")
-                            raise
-                        
-                        # 執行分析
-                        print(f"[DEBUG] Calling engine.analyze_with_cancellation")
-                        async for chunk in engine.analyze_with_cancellation(
-                            content=content,
-                            log_type=log_type,
-                            mode=analysis_mode,
-                            provider=model_provider,
-                            analysis_id=analysis_id
-                        ):
-                            message_queue.put(chunk)
-                    else:
-                        print(f"[DEBUG] No engine, using direct API call")
-                        # 直接 API 調用的邏輯
-                        message_queue.put("## 直接 API 分析\n\n")
-                        
-                        # 這裡放你的 API 調用代碼
-                        if provider == 'anthropic':
-                            result = await call_anthropic_api(content, log_type, mode)
-                            for chunk in result:
-                                message_queue.put(chunk)
-                        elif provider == 'openai':
-                            result = await call_openai_api(content, log_type, mode)
-                            for chunk in result:
-                                message_queue.put(chunk)
-                    
-                    # 完成標記
-                    message_queue.put(None)
-                    
-                except Exception as e:
-                    print(f"[DEBUG] Error in async_analyze: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    error_occurred.set()
-                    message_queue.put(f"ERROR: {str(e)}")
-                    message_queue.put(None)
-            
-            # 運行異步函數
-            loop.run_until_complete(async_analyze())
-            loop.close()
-        
         # 發送開始事件
         yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
         
-        # 啟動線程
-        thread = threading.Thread(target=run_in_thread)
-        thread.start()
-        
-        # 從隊列讀取並生成 SSE 事件
-        while True:
-            try:
-                chunk = message_queue.get(timeout=30)  # 30秒超時
+        try:
+            # 使用同步方式調用 API
+            if provider == 'anthropic':
+                from anthropic import Anthropic
                 
-                if chunk is None:
-                    # 結束標記
-                    break
+                api_key = os.getenv('ANTHROPIC_API_KEY')
+                if not api_key:
+                    yield f"data: {json.dumps({'type': 'error', 'error': 'Anthropic API key not found'})}\n\n"
+                    return
                 
-                if chunk.startswith("ERROR:"):
-                    # 錯誤消息
-                    yield f"data: {json.dumps({'type': 'error', 'error': chunk[6:]})}\n\n"
-                else:
-                    # 正常內容
-                    yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
-            
-            except Exception as e:
-                print(f"[DEBUG] Queue timeout or error: {e}")
-                yield f"data: {json.dumps({'type': 'error', 'error': 'Timeout'})}\n\n"
-                break
-        
-        # 等待線程結束
-        thread.join(timeout=5)
-        
-        # 發送完成事件
-        if not error_occurred.is_set():
-            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
-    
-    # 輔助函數：調用 Anthropic API
-    async def call_anthropic_api(content, log_type, mode):
-        """異步調用 Anthropic API"""
-        from anthropic import AsyncAnthropic
-        
-        api_key = os.getenv('ANTHROPIC_API_KEY')
-        if not api_key:
-            yield "Error: Anthropic API key not found"
-            return
-        
-        client = AsyncAnthropic(api_key=api_key)
-        
-        model_map = {
-            'quick': 'claude-3-haiku-20240307',
-            'intelligent': 'claude-3-5-sonnet-20241022',
-            'large_file': 'claude-3-5-sonnet-20241022',
-            'max_token': 'claude-3-5-sonnet-20241022'
-        }
-        model = model_map.get(mode, 'claude-3-5-sonnet-20241022')
-        
-        prompt = _build_professional_prompt(content, log_type, mode)
-        
-        stream = await client.messages.create(
-            model=model,
-            max_tokens=4000 if mode == 'max_token' else 2000,
-            temperature=0.3,
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt
+                client = Anthropic(api_key=api_key)
+                
+                # 選擇模型
+                model_map = {
+                    'quick': 'claude-3-5-haiku-20241022',
+                    'intelligent': 'claude-3-5-sonnet-20241022',
+                    'large_file': 'claude-3-5-sonnet-20241022',
+                    'max_token': 'claude-3-5-sonnet-20241022'
                 }
-            ],
-            stream=True
-        )
-        
-        async for chunk in stream:
-            if chunk.type == 'content_block_delta':
-                text = chunk.delta.text
-                if text:
-                    yield text
+                model = model_map.get(mode, 'claude-3-5-sonnet-20241022')
+                
+                # 構建提示詞
+                prompt = _build_prompt(content, log_type, mode)
+                
+                # 創建串流回應
+                stream = client.messages.create(
+                    model=model,
+                    max_tokens=4000 if mode == 'max_token' else 2000,
+                    temperature=0.3,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    stream=True
+                )
+                
+                # 串流輸出
+                for chunk in stream:
+                    if chunk.type == 'content_block_delta':
+                        text = chunk.delta.text
+                        if text:
+                            yield f"data: {json.dumps({'type': 'content', 'content': text})}\n\n"
+                
+            elif provider == 'openai':
+                from openai import OpenAI
+                
+                api_key = os.getenv('OPENAI_API_KEY')
+                if not api_key:
+                    yield f"data: {json.dumps({'type': 'error', 'error': 'OpenAI API key not found'})}\n\n"
+                    return
+                
+                client = OpenAI(api_key=api_key)
+                
+                # 選擇模型
+                model_map = {
+                    'quick': 'gpt-3.5-turbo',
+                    'intelligent': 'gpt-4-turbo-preview',
+                    'large_file': 'gpt-4-turbo-preview',
+                    'max_token': 'gpt-4-turbo-preview'
+                }
+                model = model_map.get(mode, 'gpt-4-turbo-preview')
+                
+                # 創建串流回應
+                stream = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": _get_system_prompt(log_type)
+                        },
+                        {
+                            "role": "user",
+                            "content": _build_prompt(content, log_type, mode)
+                        }
+                    ],
+                    temperature=0.3,
+                    stream=True
+                )
+                
+                # 串流輸出
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        yield f"data: {json.dumps({'type': 'content', 'content': chunk.choices[0].delta.content})}\n\n"
+            
+            # 發送完成事件
+            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+            
+        except Exception as e:
+            print(f"[DEBUG] Error in analysis: {e}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
     
-    # 輔助函數：調用 OpenAI API
-    async def call_openai_api(content, log_type, mode):
-        """異步調用 OpenAI API"""
-        from openai import AsyncOpenAI
-        
-        api_key = os.getenv('OPENAI_API_KEY')
-        if not api_key:
-            yield "Error: OpenAI API key not found"
-            return
-        
-        client = AsyncOpenAI(api_key=api_key)
-        
-        model_map = {
-            'quick': 'gpt-3.5-turbo',
-            'intelligent': 'gpt-4-turbo-preview',
-            'large_file': 'gpt-4-turbo-preview',
-            'max_token': 'gpt-4-turbo-preview'
-        }
-        model = model_map.get(mode, 'gpt-4-turbo-preview')
-        
-        messages = [
-            {
-                "role": "system",
-                "content": _get_system_prompt(log_type)
-            },
-            {
-                "role": "user",
-                "content": _build_professional_prompt(content, log_type, mode)
-            }
-        ]
-        
-        response = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.3,
-            stream=True
-        )
-        
-        async for chunk in response:
-            if chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
-    
-    # 構建提示詞的輔助函數
-    def _build_professional_prompt(content, log_type, mode):
+    # 輔助函數
+    def _build_prompt(content, log_type, mode):
+        """構建提示詞"""
         if log_type == 'anr':
             base_prompt = """你是一位資深的 Android 系統工程師，專門分析 ANR (Application Not Responding) 問題。
 請分析以下 ANR 日誌，並提供詳細的技術分析報告。使用 Markdown 格式，包含程式碼範例。"""
@@ -406,6 +313,7 @@ def analyze_with_cancellation():
             'max_token': '\n\n請提供最詳盡的分析，包含所有技術細節、多個解決方案、最佳實踐和案例。'
         }
         
+        # 限制內容長度
         max_content_length = {
             'quick': 2000,
             'intelligent': 4000,
@@ -420,6 +328,7 @@ def analyze_with_cancellation():
         return f"{base_prompt}{mode_prompts.get(mode, '')}\n\n日誌內容：\n```\n{truncated_content}\n```"
     
     def _get_system_prompt(log_type):
+        """獲取系統提示詞"""
         if log_type == 'anr':
             return """You are an expert Android system engineer specializing in ANR analysis. 
 You have deep knowledge of Android threading, Handler/Looper, and performance optimization.
