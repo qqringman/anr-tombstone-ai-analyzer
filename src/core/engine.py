@@ -332,6 +332,25 @@ class CancellableAiAnalysisEngine(AiAnalysisEngine):
         self.cancellation_manager = get_cancellation_manager()
         self._active_analyses: Dict[str, CancellationToken] = {}
 
+    def analyze_sync_simple(self, content: str, log_type: str, mode: str, provider: str = None):
+            """簡單的同步分析方法 - 用於測試"""
+            import time
+            
+            # 模擬一些處理
+            time.sleep(1)
+            
+            # 返回一些測試結果
+            return [
+                f"# {log_type.upper()} Analysis\n",
+                f"Mode: {mode}\n",
+                f"Provider: {provider or 'default'}\n",
+                f"Content length: {len(content)} chars\n",
+                "\n",
+                "## Analysis Result\n",
+                "This is a test analysis result.\n",
+                "Real analysis would appear here.\n"
+            ]
+            
     async def analyze_with_cancellation(self,
                                       content: str,
                                       log_type: str,
@@ -377,11 +396,6 @@ class CancellableAiAnalysisEngine(AiAnalysisEngine):
             print(f"[DEBUG] About to call update_analysis_status")
             await self.storage.update_analysis_status(token.analysis_id, "running")
             print(f"[DEBUG] Returned from update_analysis_status")
-
-            # 先直接 yield 一些測試內容
-            print(f"[DEBUG] Starting to yield test content")
-            yield "# 測試分析\n\n"
-            print(f"[DEBUG] Yielded first line")
 
             await self.status_manager.add_message(
                 MessageType.INFO,
