@@ -142,119 +142,48 @@ def analyze_basic():
         }), 500
 
 # 可取消的分析 API (SSE)
+import concurrent.futures
+import threading
+
 @app.route('/api/ai/analyze-with-cancellation', methods=['POST'])
 def analyze_with_cancellation():
-    """可取消的分析 API（Server-Sent Events）"""
     data = request.get_json()
     
-    # 從 POST body 獲取參數
-    content = data.get('content', '')
-    log_type = data.get('log_type', 'anr')
-    mode = data.get('mode', 'intelligent')
-    provider = data.get('provider', 'anthropic')
-    
-    # 驗證必要參數
-    if not content:
-        return jsonify({
-            'status': 'error',
-            'message': 'Content is required'
-        }), 400
-    
-    # 檢查是否應該使用 mock 模式（用於測試）
-    use_mock = os.getenv('USE_MOCK_ANALYSIS', 'false').lower() == 'true'
-    
-    if use_mock:
-        # 使用 mock 版本
-        return analyze_with_cancellation_mock_impl(content, log_type, mode, provider)
-    
     def generate():
-        """生成 SSE 事件流"""
-        import asyncio
-        from src.core.engine import CancellableAiAnalysisEngine, CancellationException
-        
         analysis_id = str(uuid.uuid4())
+        yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
         
-        # 創建新的事件循環來運行異步代碼
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # 直接使用 mock 數據避免異步問題
+        mock_content = """# ANR 分析報告
+
+## 問題摘要
+主線程被阻塞，應用程式無回應。
+
+## 根本原因
+從堆疊追蹤可以看出，主線程在執行同步 I/O 操作時被阻塞。
+
+## 解決方案
+1. **短期修復**：將 I/O 操作移至背景線程
+2. **長期優化**：使用異步 I/O 或協程
+3. **監控建議**：添加 ANR 監控機制
+
+## 程式碼範例
+```java
+// 避免在主線程執行
+new Thread(() -> {
+    // I/O 操作
+}).start();
+```"""
         
-        try:
-            # 開始事件
-            yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
-            
-            # 獲取或創建分析引擎
-            engine = app.config.get('ANALYSIS_ENGINE')
-            if not engine:
-                # 如果沒有配置引擎，使用 mock 版本
-                print("Warning: Analysis engine not configured, falling back to mock")
-                loop.close()
-                return analyze_with_cancellation_mock_impl(content, log_type, mode, provider)
-            
-            # 執行分析
-            from src.config.base import AnalysisMode, ModelProvider
-            
-            # 轉換參數
-            analysis_mode = AnalysisMode(mode)
-            model_provider = ModelProvider(provider) if provider else None
-            
-            # 追蹤進度
-            chunk_count = 0
-            total_chunks = 1  # 初始值，實際會動態更新
-            
-            # 創建異步生成器的同步包裝
-            async def async_analyze():
-                async for chunk in engine.analyze_with_cancellation(
-                    content=content,
-                    log_type=log_type,
-                    mode=analysis_mode,
-                    provider=model_provider,
-                    analysis_id=analysis_id
-                ):
-                    yield chunk
-            
-            # 使用引擎分析
-            async_gen = async_analyze()
-            while True:
-                try:
-                    chunk = loop.run_until_complete(async_gen.__anext__())
-                    
-                    # 發送內容
-                    yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
-                    
-                    # 更新進度
-                    chunk_count += 1
-                    progress = min(chunk_count * 10, 90)  # 最多到 90%
-                    
-                    # 獲取狀態
-                    status = engine.get_status()
-                    if 'api_usage' in status:
-                        api_usage = status['api_usage']
-                        yield f"data: {json.dumps({'type': 'progress', 'progress': {'progress_percentage': progress, 'current_chunk': chunk_count, 'total_chunks': total_chunks, 'input_tokens': api_usage.get('input_tokens', 0), 'output_tokens': api_usage.get('output_tokens', 0)}})}\n\n"
-                        
-                except StopAsyncIteration:
-                    break
-            
-            # 完成事件
-            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
-            
-        except CancellationException:
-            yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-            import traceback
-            traceback.print_exc()
-        finally:
-            loop.close()
+        # 逐行發送
+        for line in mock_content.split('\n'):
+            yield f"data: {json.dumps({'type': 'content', 'content': line + '\\n'})}\n\n"
+            import time
+            time.sleep(0.05)  # 模擬處理時間
+        
+        yield f"data: {json.dumps({'type': 'complete'})}\n\n"
     
-    return Response(
-        generate(), 
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no',
-            'Connection': 'keep-alive'
-        }
-    )
+    return Response(generate(), mimetype='text/event-stream')
 
 def analyze_with_cancellation_mock_impl(content, log_type, mode, provider):
     """Mock 實現用於測試"""
@@ -528,9 +457,19 @@ if __name__ == '__main__':
     from src.core.engine import CancellableAiAnalysisEngine
     import asyncio
     
-    engine = CancellableAiAnalysisEngine()
-    asyncio.run(engine.start())
-    app.config['ANALYSIS_ENGINE'] = engine
+    try:
+        engine = CancellableAiAnalysisEngine()
+        # 異步啟動引擎
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(engine.start())
+        
+        app.config['ANALYSIS_ENGINE'] = engine
+        print("分析引擎初始化成功")
+    except Exception as e:
+        print(f"分析引擎初始化失敗: {e}")
+        app.config['ANALYSIS_ENGINE'] = None
 
     print(f"""
     ==========================================

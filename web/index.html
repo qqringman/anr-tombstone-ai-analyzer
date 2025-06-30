@@ -1084,84 +1084,96 @@
                 
                 // 清除之前的結果
                 clearResults();
-                // 使用 POST 請求，將內容放在 body 中
-                fetch('/api/ai/analyze-with-cancellation', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        content: content,
-                        log_type: logType,
-                        mode: mode,
-                        provider: provider
-                    })
-                }).then(response => {
+                
+                try {
+                    // 發送 POST 請求並處理 SSE 回應
+                    const response = await fetch('/api/ai/analyze-with-cancellation', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            content: content,
+                            log_type: logType,
+                            mode: mode,
+                            provider: provider
+                        })
+                    });
+
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}`);
                     }
-                    
-                    // 處理 SSE 流
+
+                    // 確認回應是 SSE
+                    const contentType = response.headers.get('content-type');
+                    if (!contentType || !contentType.includes('text/event-stream')) {
+                        throw new Error('Invalid response type');
+                    }
+
+                    // 處理 SSE 串流
                     const reader = response.body.getReader();
                     const decoder = new TextDecoder();
                     let buffer = '';
-                    
-                    return reader.read().then(function processResult(result) {
-                        if (result.done) return;
+
+                    while (true) {
+                        const { done, value } = await reader.read();
                         
-                        buffer += decoder.decode(result.value, { stream: true });
+                        if (done) {
+                            console.log('[DEBUG] Stream done');
+                            break;
+                        }
+                        
+                        const text = decoder.decode(value, { stream: true });
+                        console.log('[DEBUG] Received text:', text);
+                        
+                        buffer += text;
                         const lines = buffer.split('\n');
+                        buffer = lines.pop() || ''; // 保留不完整的行
                         
-                        // 處理所有完整的行
-                        for (let i = 0; i < lines.length - 1; i++) {
-                            const line = lines[i].trim();
+                        for (const line of lines) {
+                            console.log('[DEBUG] Processing line:', line);
+                            
                             if (line.startsWith('data: ')) {
                                 try {
-                                    const data = JSON.parse(line.substring(6));
+                                    const jsonStr = line.substring(6);
+                                    console.log('[DEBUG] JSON string:', jsonStr);
+                                    const data = JSON.parse(jsonStr);
+                                    console.log('[DEBUG] Parsed data:', data);
                                     handleSSEMessage(data);
                                 } catch (e) {
-                                    console.error('Error parsing SSE data:', e);
+                                    console.error('[DEBUG] Error parsing JSON:', e, 'Line:', line);
                                 }
                             }
                         }
-                        
-                        // 保留最後一個不完整的行在緩衝區中
-                        buffer = lines[lines.length - 1];
-                        
-                        // 繼續讀取
-                        return reader.read().then(processResult);
-                    });
-                }).catch(error => {
+                    }
+                } catch (error) {
                     console.error('Analysis error:', error);
                     showMessage(`錯誤: ${error.message}`, 'error');
                     stopAnalysis();
-                });
+                }
             };
+            
             reader.readAsText(currentFile);
         }
 
         // Handle SSE Messages - Fixed content handling
         function handleSSEMessage(data) {
-            console.log('SSE Message:', data); // Debug log
+            console.log('[DEBUG] SSE Message received:', data);
+            console.log('[DEBUG] Message type:', data.type);
+            console.log('[DEBUG] Current results length:', analysisResults.content.length);
             
             switch (data.type) {
-                case 'start':
-                    analysisId = data.analysis_id;
-                    document.getElementById('analysisId').textContent = `ID: ${analysisId}`;
-                    addStatusLog('開始分析', 'info');
-                    break;
-                    
-                    case 'content':
-                    // Append all content without filtering
+                case 'content':
+                    console.log('[DEBUG] Content to append:', data.content);
                     if (data.content) {
-                        console.log('Received content:', data.content); // Debug log
                         analysisResults.content += data.content;
                         analysisResults.raw += data.content;
+                        console.log('[DEBUG] Total content length now:', analysisResults.content.length);
                         
-                        // Update display in real-time
+                        // 立即更新顯示
                         updateResultsDisplay();
                         
-                        // Auto show results section when content starts coming
+                        // 確保結果區域可見
                         if (!document.getElementById('resultsSection').classList.contains('active')) {
                             document.getElementById('resultsSection').classList.add('active');
                         }

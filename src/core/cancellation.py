@@ -6,6 +6,7 @@ from typing import Dict, Optional, Callable
 from datetime import datetime
 from enum import Enum
 import uuid
+import threading
 
 from .exceptions import CancellationException
 
@@ -25,20 +26,22 @@ class CancellationToken:
         self.reason: Optional[CancellationReason] = None
         self.cancelled_at: Optional[datetime] = None
         self._callbacks: list[Callable] = []
+        self._lock = threading.Lock()  # 使用線程鎖而不是異步鎖
     
     def cancel(self, reason: CancellationReason = CancellationReason.USER_CANCELLED):
         """取消操作"""
-        if not self.is_cancelled:
-            self.is_cancelled = True
-            self.reason = reason
-            self.cancelled_at = datetime.now()
-            
-            # 執行所有回調
-            for callback in self._callbacks:
-                try:
-                    callback()
-                except Exception:
-                    pass
+        with self._lock:
+            if not self.is_cancelled:
+                self.is_cancelled = True
+                self.reason = reason
+                self.cancelled_at = datetime.now()
+                
+                # 執行所有回調
+                for callback in self._callbacks:
+                    try:
+                        callback()
+                    except Exception:
+                        pass
     
     def check(self):
         """檢查是否已取消，如果已取消則拋出異常"""
@@ -47,34 +50,35 @@ class CancellationToken:
     
     def add_callback(self, callback: Callable):
         """添加取消回調"""
-        self._callbacks.append(callback)
-        
-        # 如果已經取消，立即執行回調
-        if self.is_cancelled:
-            try:
-                callback()
-            except Exception:
-                pass
+        with self._lock:
+            self._callbacks.append(callback)
+            
+            # 如果已經取消，立即執行回調
+            if self.is_cancelled:
+                try:
+                    callback()
+                except Exception:
+                    pass
 
 class CancellationManager:
     """取消管理器"""
     def __init__(self):
         self._tokens: Dict[str, CancellationToken] = {}
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()  # 使用線程鎖
     
     async def create_token(self, analysis_id: Optional[str] = None) -> CancellationToken:
         """創建取消令牌"""
         if not analysis_id:
             analysis_id = str(uuid.uuid4())
         
-        async with self._lock:
+        with self._lock:
             token = CancellationToken(analysis_id)
             self._tokens[analysis_id] = token
             return token
     
     async def get_token(self, analysis_id: str) -> Optional[CancellationToken]:
         """獲取取消令牌"""
-        async with self._lock:
+        with self._lock:
             return self._tokens.get(analysis_id)
     
     async def cancel(self, analysis_id: str, reason: CancellationReason = CancellationReason.USER_CANCELLED) -> bool:
@@ -85,17 +89,17 @@ class CancellationManager:
             return True
         return False
     
+    async def remove_token(self, analysis_id: str):
+        """移除取消令牌"""
+        with self._lock:
+            self._tokens.pop(analysis_id, None)
+    
     async def cancel_all(self, reason: CancellationReason = CancellationReason.SYSTEM_SHUTDOWN):
         """取消所有分析"""
         async with self._lock:
             for token in self._tokens.values():
                 if not token.is_cancelled:
                     token.cancel(reason)
-    
-    async def remove_token(self, analysis_id: str):
-        """移除取消令牌"""
-        async with self._lock:
-            self._tokens.pop(analysis_id, None)
     
     async def cleanup_old_tokens(self, max_age_hours: int = 24):
         """清理舊的取消令牌"""

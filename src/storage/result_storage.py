@@ -42,10 +42,14 @@ class ResultStorage:
                                    provider: str,
                                    model: str,
                                    content: str,
+                                   analysis_id: Optional[str] = None,  # 添加這個參數
                                    metadata: Optional[Dict[str, Any]] = None) -> str:
         """創建分析記錄"""
         with self.db.session() as session:
+            # 使用提供的 ID 或生成新的
+            record_id = analysis_id or str(uuid.uuid4())            
             record = AnalysisRecord(
+                id=record_id,  # 使用指定的 ID                
                 analysis_type=analysis_type,
                 analysis_mode=analysis_mode,
                 provider=provider,
@@ -90,27 +94,45 @@ class ResultStorage:
                 logger.info(f"Updated analysis result: {analysis_id}")
     
     async def update_analysis_status(self,
-                                   analysis_id: str,
-                                   status: str,
-                                   error_message: Optional[str] = None):
+                                analysis_id: str,
+                                status: str,
+                                error_message: Optional[str] = None):
         """更新分析狀態"""
-        with self.db.session() as session:
-            record = session.query(AnalysisRecord).filter_by(id=analysis_id).first()
-            
-            if record:
-                record.status = status
-                if error_message:
-                    record.error_message = error_message
+        print(f"[DEBUG] update_analysis_status called - id: {analysis_id}, status: {status}")
+        
+        try:
+            with self.db.session() as session:
+                print(f"[DEBUG] Got database session")
                 
-                if status == 'running' and not record.started_at:
-                    record.started_at = datetime.utcnow()
-                elif status in ['completed', 'failed', 'cancelled']:
-                    record.completed_at = datetime.utcnow()
-                    if record.started_at:
-                        duration = (record.completed_at - record.started_at).total_seconds()
-                        record.duration_seconds = duration
+                record = session.query(AnalysisRecord).filter_by(id=analysis_id).first()
+                print(f"[DEBUG] Query result: {record}")
                 
-                session.commit()
+                if record:
+                    print(f"[DEBUG] Found record, updating status")
+                    record.status = status
+                    if error_message:
+                        record.error_message = error_message
+                    
+                    if status == 'running' and not record.started_at:
+                        record.started_at = datetime.utcnow()
+                    elif status in ['completed', 'failed', 'cancelled']:
+                        record.completed_at = datetime.utcnow()
+                        if record.started_at:
+                            duration = (record.completed_at - record.started_at).total_seconds()
+                            record.duration_seconds = duration
+                    
+                    session.commit()
+                    print(f"[DEBUG] Status updated successfully")
+                else:
+                    print(f"[DEBUG] ERROR: No record found with id {analysis_id}")
+                    
+        except Exception as e:
+            print(f"[DEBUG] ERROR in update_analysis_status: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+        
+        print(f"[DEBUG] update_analysis_status completed")
     
     async def get_analysis_record(self, analysis_id: str) -> Optional[Dict[str, Any]]:
         """獲取分析記錄"""

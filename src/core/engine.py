@@ -75,31 +75,59 @@ class AiAnalysisEngine:
     
     def _init_wrappers(self):
         """初始化所有 wrapper"""
+        print("[DEBUG] Starting _init_wrappers")
+
         # Anthropic
         if self.config.api_keys.anthropic:
-            anthropic_config = AnthropicApiConfig()
-            anthropic_config.api_key = self.config.api_keys.anthropic
+            print(f"[DEBUG] Anthropic API key found, length: {len(self.config.api_keys.anthropic)}")
             
-            self._wrappers[ModelProvider.ANTHROPIC] = AnthropicAiLogWrapper(
-                anthropic_config, self.status_manager
-            )
-            self.logger.log_analysis("info", "Anthropic wrapper 初始化成功")
-        
+            try:
+                anthropic_config = AnthropicApiConfig()
+                anthropic_config.api_key = self.config.api_keys.anthropic
+                
+                self._wrappers[ModelProvider.ANTHROPIC] = AnthropicAiLogWrapper(
+                    anthropic_config, self.status_manager
+                )
+                print("[DEBUG] Anthropic wrapper initialized successfully")
+                self.logger.log_analysis("info", "Anthropic wrapper 初始化成功")
+            except Exception as e:
+                print(f"[DEBUG] Failed to initialize Anthropic wrapper: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print("[DEBUG] No Anthropic API key found")
+
         # OpenAI
         if self.config.api_keys.openai:
-            openai_config = OpenApiConfig()
-            openai_config.api_key = self.config.api_keys.openai
-            
-            self._wrappers[ModelProvider.OPENAI] = OpenAiLogWrapper(
-                openai_config, self.status_manager
-            )
-            self.logger.log_analysis("info", "OpenAI wrapper 初始化成功")
-        
+            print(f"[DEBUG] OpenAI API key found, length: {len(self.config.api_keys.openai)}")
+            try:
+                openai_config = OpenApiConfig()
+                openai_config.api_key = self.config.api_keys.openai
+                
+                self._wrappers[ModelProvider.OPENAI] = OpenAiLogWrapper(
+                    openai_config, self.status_manager
+                )
+                print("[DEBUG] OpenAI wrapper initialized successfully")
+                self.logger.log_analysis("info", "OpenAI wrapper 初始化成功")
+            except Exception as e:
+                print(f"[DEBUG] Failed to initialize OpenAI wrapper: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print("[DEBUG] No OpenAI API key found")
+
         # 設定預設提供者
+        print(f"[DEBUG] Model preferences default provider: {self.config.model_preferences.default_provider}")
         if self.config.model_preferences.default_provider:
             provider = ModelProvider(self.config.model_preferences.default_provider)
             if provider in self._wrappers:
                 self._current_provider = provider
+                print(f"[DEBUG] Set current provider to: {provider}")
+            else:
+                print(f"[DEBUG] Default provider {provider} not in wrappers")
+        
+        print(f"[DEBUG] Final wrappers: {list(self._wrappers.keys())}")
+        print(f"[DEBUG] Final current provider: {self._current_provider}")
     
     async def analyze(self, 
                      content: str, 
@@ -323,22 +351,38 @@ class CancellableAiAnalysisEngine(AiAnalysisEngine):
         Yields:
             分析結果片段
         """
+
+        """支援取消的分析方法"""
+        print(f"[DEBUG] Starting analyze_with_cancellation - log_type: {log_type}, mode: {mode}, provider: {provider}")
+
+
         # 創建取消令牌
         token = await self.cancellation_manager.create_token(analysis_id)
         self._active_analyses[token.analysis_id] = token
-        
+        print(f"[DEBUG] Created cancellation token: {token.analysis_id}")
+
         try:
-            # 記錄分析開始
-            await self.storage.create_analysis_record(
+            # 記錄分析開始 - 使用 token.analysis_id 作為記錄 ID
+            record_id = await self.storage.create_analysis_record(
+                analysis_id=token.analysis_id,  # 添加這個參數
                 analysis_type=log_type,
                 analysis_mode=mode.value,
                 provider=(provider or self._current_provider).value,
                 model=self._get_model_for_mode(mode, provider),
                 content=content
             )
-            
+            print(f"[DEBUG] Created analysis record with ID: {record_id}")
+
             # 更新狀態
+            print(f"[DEBUG] About to call update_analysis_status")
             await self.storage.update_analysis_status(token.analysis_id, "running")
+            print(f"[DEBUG] Returned from update_analysis_status")
+
+            # 先直接 yield 一些測試內容
+            print(f"[DEBUG] Starting to yield test content")
+            yield "# 測試分析\n\n"
+            print(f"[DEBUG] Yielded first line")
+
             await self.status_manager.add_message(
                 MessageType.INFO,
                 f"開始分析 (ID: {token.analysis_id})"
@@ -347,17 +391,23 @@ class CancellableAiAnalysisEngine(AiAnalysisEngine):
             # 選擇 wrapper
             if provider:
                 self.set_provider(provider)
-            
+                print(f"[DEBUG] Set provider to: {provider}")
+
+            print(f"[DEBUG] Current provider: {self._current_provider}")
+            print(f"[DEBUG] Available wrappers: {list(self._wrappers.keys())}")
+
             if not self._current_provider:
                 raise ProviderNotAvailableException("No AI provider available")
             
             wrapper = self._wrappers[self._current_provider]
-            
+            print(f"[DEBUG] Selected wrapper: {wrapper.__class__.__name__}")            
+
             # 執行分析
             result_chunks = []
             input_tokens = 0
             output_tokens = 0
             
+            print(f"[DEBUG] Starting wrapper.analyze")
             async for chunk in wrapper.analyze(content, log_type, mode, token):
                 # 檢查取消狀態
                 token.check()
@@ -399,6 +449,8 @@ class CancellableAiAnalysisEngine(AiAnalysisEngine):
             )
             
         except CancellationException as e:
+            print(f"[DEBUG] CancellationException:")
+            print(str(e))
             # 處理取消
             await self.storage.update_analysis_status(
                 token.analysis_id,
@@ -409,6 +461,8 @@ class CancellableAiAnalysisEngine(AiAnalysisEngine):
             raise
             
         except Exception as e:
+            print(f"[DEBUG] Exception:")
+            print(str(e))
             # 處理其他錯誤
             await self.storage.update_analysis_status(
                 token.analysis_id,
