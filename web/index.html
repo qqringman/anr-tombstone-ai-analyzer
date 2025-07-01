@@ -455,20 +455,46 @@
         }
 
         .results-content code {
-            background: #f4f4f4;
-            padding: 2px 4px;
+            background: #f3f4f6;
+            color: #1f2937;
+            padding: 2px 6px;
             border-radius: 3px;
             font-size: 0.9em;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
         }
 
         .results-content pre {
-            background: #282c34;
-            color: #abb2bf;
-            padding: 1em;
-            border-radius: 4px;
+            background: #f6f8fa;  /* 淺灰色背景 */
+            color: #24292e;       /* 深色文字 */
+            padding: 16px;
+            border-radius: 6px;
             overflow-x: auto;
-            margin-bottom: 1em;
+            margin: 16px 0;
+            border: 1px solid #e1e4e8;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
         }
+
+        /* 如果使用 Prism.js，覆蓋其預設樣式 */
+        .results-content pre[class*="language-"] {
+            background: #f6f8fa !important;
+            color: #24292e !important;
+        }
+
+        .results-content code[class*="language-"] {
+            background: #f6f8fa !important;
+            color: #24292e !important;
+        }
+
+        /* 語法高亮顏色調整 */
+        .token.comment { color: #6a737d; }
+        .token.string { color: #032f62; }
+        .token.keyword { color: #d73a49; }
+        .token.function { color: #6f42c1; }
+        .token.number { color: #005cc5; }
+        .token.operator { color: #d73a49; }
+        .token.class-name { color: #6f42c1; }
 
         /* Status Messages */
         .status-message {
@@ -813,9 +839,9 @@
                     <div class="value" id="outputTokens">0</div>
                 </div>
                 <div class="progress-detail">
-                    <div class="label">當前成本</div>
+                    <div class="label">預估成本</div>
                     <div class="value" id="currentCost">$0.00</div>
-                </div>                
+                </div>
             </div>
             
             <div id="statusMessages" style="margin-top: 16px;"></div>
@@ -886,6 +912,14 @@
             content: '',
             raw: '',
             stats: {}
+        };
+
+        // 全局變數存儲圖表數據
+        let chartData = {
+            inputTokens: 0,
+            outputTokens: 0,
+            totalCost: 0,
+            tokenHistory: []
         };
 
         // Model-based time estimates (minutes)
@@ -1101,7 +1135,7 @@
                 clearResults();
                 
                 try {
-                    // 發送 POST 請求並處理 SSE 回應
+                    // 發送 POST 請求
                     const response = await fetch('/api/ai/analyze-with-cancellation', {
                         method: 'POST',
                         headers: {
@@ -1119,12 +1153,6 @@
                         throw new Error(`HTTP ${response.status}`);
                     }
 
-                    // 確認回應是 SSE
-                    const contentType = response.headers.get('content-type');
-                    if (!contentType || !contentType.includes('text/event-stream')) {
-                        throw new Error('Invalid response type');
-                    }
-
                     // 處理 SSE 串流
                     const reader = response.body.getReader();
                     const decoder = new TextDecoder();
@@ -1133,30 +1161,28 @@
                     while (true) {
                         const { done, value } = await reader.read();
                         
-                        if (done) {
-                            console.log('[DEBUG] Stream done');
-                            break;
-                        }
+                        if (done) break;
                         
                         const text = decoder.decode(value, { stream: true });
-                        console.log('[DEBUG] Received text:', text);
-                        
                         buffer += text;
                         const lines = buffer.split('\n');
-                        buffer = lines.pop() || ''; // 保留不完整的行
+                        buffer = lines.pop() || '';
                         
                         for (const line of lines) {
-                            console.log('[DEBUG] Processing line:', line);
-                            
                             if (line.startsWith('data: ')) {
                                 try {
                                     const jsonStr = line.substring(6);
-                                    console.log('[DEBUG] JSON string:', jsonStr);
                                     const data = JSON.parse(jsonStr);
-                                    console.log('[DEBUG] Parsed data:', data);
+                                    
+                                    // 保存 analysisId
+                                    if (data.type === 'start' && data.analysis_id) {
+                                        analysisId = data.analysis_id;
+                                        console.log('[DEBUG] Analysis ID saved:', analysisId);
+                                    }
+                                    
                                     handleSSEMessage(data);
                                 } catch (e) {
-                                    console.error('[DEBUG] Error parsing JSON:', e, 'Line:', line);
+                                    console.error('[DEBUG] Error parsing JSON:', e);
                                 }
                             }
                         }
@@ -1247,20 +1273,41 @@
 
         // Cancel Analysis
         async function cancelAnalysis() {
-            if (!analysisId) return;
+            console.log('[DEBUG] Cancel analysis called, analysisId:', analysisId);
+            
+            if (!analysisId) {
+                showMessage('沒有正在進行的分析', 'warning');
+                return;
+            }
 
             try {
+                // 先關閉 SSE 連接
+                if (eventSource) {
+                    eventSource.close();
+                    eventSource = null;
+                }
+                
+                // 發送取消請求
                 const response = await fetch(`/api/ai/cancel-analysis/${analysisId}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ reason: 'user_cancelled' })
                 });
 
+                const result = await response.json();
+                
                 if (response.ok) {
-                    showMessage('正在取消分析...', 'info');
+                    showMessage('分析已取消', 'info');
+                    stopAnalysis();
+                } else {
+                    showMessage(result.message || '取消失敗', 'error');
                 }
             } catch (error) {
                 console.error('Cancel error:', error);
+                showMessage('取消操作失敗', 'error');
+                
+                // 即使請求失敗，也要停止本地的分析狀態
+                stopAnalysis();
             }
         }
 
@@ -1281,6 +1328,8 @@
         function updateProgress(progress) {
             if (!progress) return;
             
+            console.log('[DEBUG] Progress update:', progress);
+            
             // 更新進度條
             const percent = progress.progress_percentage || progress.percentage || 0;
             document.getElementById('progressBar').style.width = `${percent}%`;
@@ -1292,45 +1341,195 @@
                     `${progress.current_chunk}/${progress.total_chunks}`;
             }
             
-            // 即時更新 Token 統計 - 這是重點修改
+            // 更新 Token 統計
+            let chartNeedsUpdate = false;
+            
             if (progress.input_tokens !== undefined) {
                 const inputElement = document.getElementById('inputTokens');
-                const currentValue = parseInt(inputElement.textContent.replace(/,/g, '')) || 0;
-                const newValue = progress.input_tokens;
+                inputElement.textContent = progress.input_tokens.toLocaleString();
                 
-                // 使用動畫效果更新數字
-                if (currentValue !== newValue) {
-                    animateValue(inputElement, currentValue, newValue, 500);
+                if (chartData.inputTokens !== progress.input_tokens) {
+                    chartData.inputTokens = progress.input_tokens;
+                    chartNeedsUpdate = true;
                 }
             }
             
             if (progress.output_tokens !== undefined) {
                 const outputElement = document.getElementById('outputTokens');
-                const currentValue = parseInt(outputElement.textContent.replace(/,/g, '')) || 0;
-                const newValue = progress.output_tokens;
+                outputElement.textContent = progress.output_tokens.toLocaleString();
                 
-                // 使用動畫效果更新數字
-                if (currentValue !== newValue) {
-                    animateValue(outputElement, currentValue, newValue, 500);
+                if (chartData.outputTokens !== progress.output_tokens) {
+                    chartData.outputTokens = progress.output_tokens;
+                    chartNeedsUpdate = true;
                 }
             }
             
-            // 更新總成本（如果有）
+            // 更新成本
             if (progress.total_cost !== undefined) {
                 const costElement = document.getElementById('currentCost');
                 if (costElement) {
                     costElement.textContent = `$${progress.total_cost.toFixed(4)}`;
+                    chartData.totalCost = progress.total_cost;
+                }
+            }
+            
+            // 即時更新圖表
+            if (chartNeedsUpdate && chartData.inputTokens + chartData.outputTokens > 0) {
+                updateLiveCharts();
+            }
+        }
+
+        // 即時更新圖表函數
+        function updateLiveCharts() {
+            // 更新 Token 使用圖表
+            const tokenCanvas = document.getElementById('tokenChart');
+            if (tokenCanvas) {
+                const tokenCtx = tokenCanvas.getContext('2d');
+                
+                // 檢查是否已有圖表
+                let tokenChart = Chart.getChart(tokenCanvas);
+                
+                if (!tokenChart) {
+                    // 創建新圖表
+                    tokenChart = new Chart(tokenCtx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['輸入 Tokens', '輸出 Tokens'],
+                            datasets: [{
+                                data: [chartData.inputTokens, chartData.outputTokens],
+                                backgroundColor: ['#3b82f6', '#10b981']
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            animation: {
+                                duration: 200
+                            },
+                            plugins: {
+                                legend: {
+                                    position: 'bottom'
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Token 使用統計 (即時)'
+                                }
+                            }
+                        }
+                    });
+                } else {
+                    // 更新現有圖表數據
+                    tokenChart.data.datasets[0].data = [chartData.inputTokens, chartData.outputTokens];
+                    tokenChart.update('active');
+                }
+            }
+            
+            // 更新成本圖表
+            const costCanvas = document.getElementById('costChart');
+            if (costCanvas) {
+                const costCtx = costCanvas.getContext('2d');
+                
+                let costChart = Chart.getChart(costCanvas);
+                
+                if (!costChart) {
+                    // 創建新圖表
+                    costChart = new Chart(costCtx, {
+                        type: 'bar',
+                        data: {
+                            labels: ['當前成本'],
+                            datasets: [{
+                                label: '成本 (USD)',
+                                data: [chartData.totalCost],
+                                backgroundColor: ['#f59e0b']
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            animation: {
+                                duration: 200
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    ticks: {
+                                        callback: function(value) {
+                                            return '$' + value.toFixed(4);
+                                        }
+                                    }
+                                }
+                            },
+                            plugins: {
+                                legend: {
+                                    display: false
+                                },
+                                title: {
+                                    display: true,
+                                    text: '成本分析 (即時)'
+                                }
+                            }
+                        }
+                    });
+                } else {
+                    // 更新現有圖表數據
+                    costChart.data.datasets[0].data = [chartData.totalCost];
+                    costChart.update('active');
                 }
             }
         }
 
-        // Handle Feedback
-        function handleFeedback(feedback) {
-            const type = feedback.type || 'info';
-            const message = feedback.message || '';
+        // 修改 handleSSEMessage 以顯示統計標籤
+        function handleSSEMessage(data) {
+            console.log('[DEBUG] SSE Message received:', data);
             
-            showMessage(message, type);
-            addStatusLog(message, type);
+            try {
+                switch (data.type) {
+                    case 'start':
+                        if (data.analysis_id) {
+                            document.getElementById('analysisId').textContent = `ID: ${data.analysis_id}`;
+                            analysisId = data.analysis_id;
+                        }
+                        // 確保統計標籤可見
+                        if (!document.getElementById('resultsSection').classList.contains('active')) {
+                            document.getElementById('resultsSection').classList.add('active');
+                        }
+                        // 自動切換到統計標籤以顯示即時圖表
+                        switchTab('stats');
+                        break;
+                        
+                    case 'content':
+                        if (data.content) {
+                            analysisResults.content += data.content;
+                            analysisResults.raw += data.content;
+                            updateResultsDisplay();
+                        }
+                        break;
+                        
+                    case 'progress':
+                        updateProgress(data.progress);
+                        break;
+                        
+                    case 'complete':
+                        showMessage('分析完成！', 'success');
+                        stopAnalysis();
+                        generateStatistics();
+                        // 切換回分析報告標籤
+                        switchTab('analysis');
+                        break;
+                        
+                    case 'cancelled':
+                        showMessage('分析已取消', 'warning');
+                        stopAnalysis();
+                        break;
+                        
+                    case 'error':
+                        showMessage(`錯誤: ${data.error}`, 'error');
+                        stopAnalysis();
+                        break;
+                }
+            } catch (error) {
+                console.error('[DEBUG] Error handling SSE message:', error);
+            }
         }
 
         // Update Results Display - Fixed markdown rendering
@@ -1555,6 +1754,22 @@
             document.getElementById('processedChunks').textContent = '0/0';
             document.getElementById('inputTokens').textContent = '0';
             document.getElementById('outputTokens').textContent = '0';
+
+            // 重置圖表數據
+            chartData = {
+                inputTokens: 0,
+                outputTokens: 0,
+                totalCost: 0,
+                tokenHistory: []
+            };
+            
+            // 清除圖表
+            ['tokenChart', 'costChart'].forEach(canvasId => {
+                const chart = Chart.getChart(canvasId);
+                if (chart) {
+                    chart.destroy();
+                }
+            });            
         }
 
         function downloadResults() {

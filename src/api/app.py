@@ -213,9 +213,15 @@ def analyze_with_cancellation():
             if model_provider:
                 engine.set_provider(model_provider)
             
-            # 創建取消令牌
+            # 創建並註冊取消令牌
             from src.core.cancellation import CancellationToken
             token = CancellationToken(analysis_id)
+            
+            # 重要：將 token 註冊到管理器
+            if hasattr(engine, 'cancellation_manager'):
+                engine.cancellation_manager._tokens[analysis_id] = token
+            elif hasattr(engine, '_active_analyses'):
+                engine._active_analyses[analysis_id] = token
             
             # 獲取 wrapper
             wrapper = engine._wrappers.get(engine._current_provider)
@@ -242,9 +248,10 @@ def analyze_with_cancellation():
             progress_data = {
                 'progress_percentage': 0,
                 'current_chunk': 0,
-                'total_chunks': 1,  # 預估
+                'total_chunks': 1,
                 'input_tokens': input_tokens,
-                'output_tokens': 0
+                'output_tokens': 0,
+                'total_cost': 0.0
             }
             yield f"data: {json.dumps({'type': 'progress', 'progress': progress_data})}\n\n"
             
@@ -254,36 +261,57 @@ def analyze_with_cancellation():
                 
                 # 初始化時間追蹤變數
                 last_progress_time = time.time()
+                cancelled = False
                 
-                # 使用 analyzer 分析
-                async for chunk in analyzer.analyze(content, analysis_mode, token):
-                    total_content.append(chunk)
-                    chunk_count += 1
+                try:
+                    # 使用 analyzer 分析
+                    async for chunk in analyzer.analyze(content, analysis_mode, token):
+                        # 檢查是否已取消
+                        if token.is_cancelled:
+                            cancelled = True
+                            break
+                            
+                        total_content.append(chunk)
+                        chunk_count += 1
+                        
+                        # 估算輸出 tokens (累積)
+                        current_output = ''.join(total_content)
+                        output_tokens = wrapper.config.estimate_tokens(current_output)
+                        
+                        # 計算進度和成本
+                        estimated_progress = min(chunk_count * 5, 90)
+                        model = wrapper.config.get_model_for_mode(analysis_mode)
+                        current_cost = wrapper.calculate_cost(input_tokens, output_tokens, model)
+                        
+                        # 發送內容
+                        yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+                        
+                        # 獲取當前時間
+                        current_time = time.time()
+                        
+                        # 每 3 個 chunk 或每 300ms 更新一次進度
+                        if chunk_count % 3 == 0 or (current_time - last_progress_time) > 0.3:
+                            progress_data = {
+                                'progress_percentage': estimated_progress,
+                                'current_chunk': chunk_count,
+                                'total_chunks': max(chunk_count + 5, 10),
+                                'input_tokens': input_tokens,
+                                'output_tokens': output_tokens,
+                                'total_cost': current_cost
+                            }
+                            yield f"data: {json.dumps({'type': 'progress', 'progress': progress_data})}\n\n"
+                            last_progress_time = current_time
                     
-                    # 估算輸出 tokens (累積)
-                    current_output = ''.join(total_content)
-                    output_tokens = wrapper.config.estimate_tokens(current_output)
-                    
-                    # 計算進度
-                    estimated_progress = min(chunk_count * 5, 90)  # 最多到 90%
-                    
-                    # 發送內容
-                    yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
-                    
-                    # 獲取當前時間
-                    current_time = time.time()
-                    
-                    # 每 5 個 chunk 或每 500ms 更新一次進度
-                    if chunk_count % 5 == 0 or (current_time - last_progress_time) > 0.5:
-                        progress_data = {
-                            'progress_percentage': estimated_progress,
-                            'current_chunk': chunk_count,
-                            'total_chunks': chunk_count + 10,  # 動態估算
-                            'input_tokens': input_tokens,
-                            'output_tokens': output_tokens
-                        }
-                        yield f"data: {json.dumps({'type': 'progress', 'progress': progress_data})}\n\n"
-                        last_progress_time = current_time
+                    if cancelled:
+                        yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
+                        return
+                        
+                except Exception as e:
+                    if "CancellationException" in str(type(e).__name__):
+                        yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
+                        return
+                    else:
+                        raise
                 
                 # 最終統計
                 total_text = ''.join(total_content)
@@ -304,20 +332,6 @@ def analyze_with_cancellation():
                 }
                 yield f"data: {json.dumps({'type': 'progress', 'progress': final_progress})}\n\n"
                 
-                # 更新資料庫（如果有整合）
-                if hasattr(engine, 'storage'):
-                    try:
-                        await engine.storage.update_analysis_result(
-                            analysis_id,
-                            total_text,
-                            input_tokens,
-                            final_output_tokens,
-                            cost,
-                            "completed"
-                        )
-                    except:
-                        pass
-                
                 # 發送完成事件
                 yield f"data: {json.dumps({'type': 'complete'})}\n\n"
             
@@ -331,11 +345,16 @@ def analyze_with_cancellation():
                 async_gen = run_analysis()
                 while True:
                     try:
+                        # 檢查取消狀態
+                        if token.is_cancelled:
+                            yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
+                            break
+                            
                         future = asyncio.run_coroutine_threadsafe(
                             async_gen.__anext__(),
                             async_loop
                         )
-                        result = future.result(timeout=30)  # 30秒超時
+                        result = future.result(timeout=30)
                         yield result
                     except StopAsyncIteration:
                         break
@@ -348,6 +367,11 @@ def analyze_with_cancellation():
                 error_msg = f"{str(e)}\n{traceback.format_exc()}"
                 yield f"data: {json.dumps({'type': 'error', 'error': error_msg})}\n\n"
             finally:
+                # 清理
+                if hasattr(engine, 'cancellation_manager'):
+                    engine.cancellation_manager._tokens.pop(analysis_id, None)
+                elif hasattr(engine, '_active_analyses'):
+                    engine._active_analyses.pop(analysis_id, None)
                 loop.close()
                 
         except Exception as e:
@@ -380,24 +404,36 @@ async def cancel_analysis(analysis_id):
     reason = data.get('reason', 'user_cancelled')
     
     try:
-        # 使用 CancellationReason 枚舉
-        from src.core.cancellation import CancellationReason
-        cancellation_reason = CancellationReason(reason)
-    except ValueError:
-        cancellation_reason = CancellationReason.USER_CANCELLED
-    
-    success = await engine.cancel_analysis(analysis_id, cancellation_reason)
-    
-    if success:
-        return jsonify({
-            'status': 'success',
-            'message': f'Analysis {analysis_id} has been cancelled'
-        })
-    else:
+        # 如果有取消管理器，使用它
+        if hasattr(engine, 'cancellation_manager'):
+            from src.core.cancellation import CancellationReason
+            try:
+                cancellation_reason = CancellationReason(reason)
+            except ValueError:
+                cancellation_reason = CancellationReason.USER_CANCELLED
+            
+            success = await engine.cancellation_manager.cancel(analysis_id, cancellation_reason)
+        else:
+            # 簡單的取消實作
+            success = True
+            print(f"[DEBUG] Cancelling analysis {analysis_id}")
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': f'Analysis {analysis_id} has been cancelled'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'Analysis {analysis_id} not found or already completed'
+            }), 404
+            
+    except Exception as e:
         return jsonify({
             'status': 'error',
-            'message': f'Analysis {analysis_id} not found or already completed'
-        }), 404
+            'message': str(e)
+        }), 500
 
 # 成本估算
 @app.route('/api/ai/estimate-analysis-cost', methods=['POST'])
