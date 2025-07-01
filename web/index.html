@@ -206,21 +206,24 @@
 
         /* Cost Estimation */
         .cost-section {
-            background: #fef3c7;
-            border: 1px solid #fcd34d;
+            background: #fef3c7 !important;
+            border: 1px solid #fcd34d !important;
             border-radius: 8px;
             padding: 16px;
             margin-top: 24px;
             display: none;
+            opacity: 1 !important;
+            visibility: visible !important;
         }
 
         .cost-section.active {
-            display: block;
+            display: block !important;  /* 加上 !important 確保不被覆蓋 */
         }
 
+        /* 成本網格優化，支援更多項目 */
         .cost-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 16px;
             margin-top: 12px;
         }
@@ -553,10 +556,16 @@
             100% { transform: rotate(360deg); }
         }
 
+        @media (max-width: 480px) {
+            .cost-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .cost-grid {
-                grid-template-columns: 1fr;
+                grid-template-columns: repeat(2, 1fr);
             }
             
             .progress-details {
@@ -990,24 +999,27 @@
             
             // Mode change listener for cost estimation
             document.querySelectorAll('input[name="analysisMode"]').forEach(radio => {
-                radio.addEventListener('change', updateCostEstimation);
+                radio.addEventListener('change', () => {
+                    console.log('[DEBUG] Analysis mode changed to:', radio.value);
+                    updateCostEstimation();
+                });
             });
             
             document.querySelectorAll('input[name="provider"]').forEach(radio => {
-                radio.addEventListener('change', updateCostEstimation);
+                radio.addEventListener('change', () => {
+                    console.log('[DEBUG] Provider changed to:', radio.value);
+                    updateCostEstimation();
+                });
             });
         }
 
         // File Handling
         function handleFile(file) {
-            // 修改驗證邏輯
+            // 驗證檔案
             if (file.size > 20 * 1024 * 1024) {
                 showMessage('檔案大小不能超過 20MB', 'error');
                 return;
             }
-            
-            // 移除副檔名檢查
-            // 不再檢查 file.name.match(/\.(txt|log)$/i)
             
             currentFile = file;
             
@@ -1025,7 +1037,7 @@
             // Enable analyze button
             document.getElementById('analyzeBtn').disabled = false;
             
-            // Update cost estimation
+            // 立即更新成本估算（重要！）
             updateCostEstimation();
         }
 
@@ -1100,11 +1112,37 @@
 
         // Cost Estimation with model-based time
         async function updateCostEstimation() {
-            if (!currentFile) return;
+            console.log('[DEBUG] updateCostEstimation called');
+            
+            // 先顯示載入中狀態
+            const costSection = document.getElementById('costSection');
+            if (!costSection) {
+                console.error('Cost section not found!');
+                return;
+            }
+            
+            // 確保區塊可見
+            costSection.classList.add('active');
+            costSection.style.display = 'block';
+            
+            // 顯示載入狀態
+            document.getElementById('estimatedCost').textContent = '計算中...';
+            document.getElementById('estimatedTime').textContent = '計算中...';
+            document.getElementById('recommendedMode').textContent = '分析中...';
+            
+            if (!currentFile) {
+                console.log('[DEBUG] No current file');
+                document.getElementById('estimatedCost').textContent = '$0.00';
+                document.getElementById('estimatedTime').textContent = '0 分鐘';
+                document.getElementById('recommendedMode').textContent = '-';
+                return;
+            }
 
             const mode = document.querySelector('input[name="analysisMode"]:checked').value;
             const provider = document.querySelector('input[name="provider"]:checked').value;
             const fileSizeKB = currentFile.size / 1024;
+            
+            console.log('[DEBUG] Request params:', { file_size_kb: fileSizeKB, mode, provider });
 
             try {
                 const response = await fetch('/api/ai/estimate-analysis-cost', {
@@ -1117,42 +1155,160 @@
                     })
                 });
 
+                console.log('[DEBUG] Response status:', response.status);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
                 const data = await response.json();
+                console.log('[DEBUG] Response data:', data);
                 
                 if (data.status === 'success' && data.data) {
                     const costData = data.data;
                     const estimate = costData.cost_estimates[0];
                     
-                    // 顯示成本
-                    document.getElementById('estimatedCost').textContent = 
-                        `$${estimate.total_cost.toFixed(4)}`;
-                    
-                    // 顯示時間（考慮 rate limits）
-                    document.getElementById('estimatedTime').textContent = 
-                        `${estimate.analysis_time_minutes.toFixed(1)} 分鐘`;
-                    
-                    // 顯示 API 查詢次數
-                    if (estimate.api_queries_needed) {
-                        // 在成本區域添加查詢次數顯示
-                        let queriesElement = document.getElementById('apiQueries');
-                        if (!queriesElement) {
-                            const costGrid = document.querySelector('.cost-grid');
-                            const div = document.createElement('div');
-                            div.className = 'cost-item';
-                            div.innerHTML = `
-                                <div class="label">API 查詢次數</div>
-                                <div class="value" id="apiQueries">${estimate.api_queries_needed}</div>
-                            `;
-                            costGrid.appendChild(div);
-                        } else {
-                            queriesElement.textContent = estimate.api_queries_needed;
-                        }
+                    // 檢查數據完整性
+                    if (!estimate) {
+                        throw new Error('No cost estimate in response');
                     }
                     
-                    document.getElementById('costSection').classList.add('active');
+                    // 保存預估值
+                    window.estimatedCost = estimate.total_cost || 0;
+                    window.estimatedInputTokens = costData.file_info?.input_tokens || 0;
+                    window.estimatedOutputTokens = costData.file_info?.output_tokens || 0;
+                    
+                    // 顯示成本 - 確保有預設值
+                    const totalCost = estimate.total_cost || 0;
+                    const costDisplay = totalCost < 0.01 
+                        ? `$${totalCost.toFixed(4)}`
+                        : totalCost < 1 
+                            ? `$${totalCost.toFixed(3)}`
+                            : `$${totalCost.toFixed(2)}`;
+                    
+                    document.getElementById('estimatedCost').textContent = costDisplay;
+                    
+                    // 顯示時間 - 確保有預設值
+                    const timeMinutes = estimate.analysis_time_minutes || 0;
+                    document.getElementById('estimatedTime').textContent = 
+                        `${timeMinutes.toFixed(1)} 分鐘`;
+                    
+                    // 顯示推薦模式
+                    const modeMap = {
+                        'quick': '快速分析',
+                        'intelligent': '智能分析',
+                        'large_file': '大檔分析',
+                        'max_token': '深度分析'
+                    };
+                    const recommendedMode = costData.recommended_mode || mode;
+                    document.getElementById('recommendedMode').textContent = 
+                        modeMap[recommendedMode] || recommendedMode;
+                    
+                    // 確保區塊持續顯示
+                    costSection.classList.add('active');
+                    console.log('[DEBUG] Cost estimation updated successfully');
+                    
+                } else {
+                    throw new Error(data.message || 'Invalid response format');
                 }
+                
             } catch (error) {
-                console.error('Cost estimation error:', error);
+                console.error('[DEBUG] Cost estimation error:', error);
+                
+                // 顯示錯誤狀態而不是保持"計算中"
+                document.getElementById('estimatedCost').textContent = '$0.00';
+                document.getElementById('estimatedTime').textContent = '無法估算';
+                document.getElementById('recommendedMode').textContent = mode || '-';
+                
+                // 顯示錯誤訊息
+                showMessage(`成本估算失敗: ${error.message}`, 'error');
+                
+                // 仍然保持區塊顯示
+                costSection.classList.add('active');
+            }
+        }
+
+        function updateCostGridWithPlan(plan, estimate) {
+            const costGrid = document.querySelector('.cost-grid');
+            
+            // 檢查是否需要添加額外的資訊項目
+            if (!document.getElementById('chunksInfo')) {
+                // 添加區塊數資訊
+                const chunksDiv = document.createElement('div');
+                chunksDiv.className = 'cost-item';
+                chunksDiv.id = 'chunksInfo';
+                chunksDiv.innerHTML = `
+                    <div class="label">處理區塊</div>
+                    <div class="value">${plan.total_chunks} 塊</div>
+                `;
+                costGrid.appendChild(chunksDiv);
+                
+                // 添加 API 調用次數
+                const apiCallsDiv = document.createElement('div');
+                apiCallsDiv.className = 'cost-item';
+                apiCallsDiv.id = 'apiCallsInfo';
+                apiCallsDiv.innerHTML = `
+                    <div class="label">API 調用</div>
+                    <div class="value">${plan.estimated_api_calls} 次</div>
+                `;
+                costGrid.appendChild(apiCallsDiv);
+                
+                // 添加 Token 資訊
+                const tokensDiv = document.createElement('div');
+                tokensDiv.className = 'cost-item';
+                tokensDiv.id = 'tokensInfo';
+                tokensDiv.innerHTML = `
+                    <div class="label">每塊 Tokens</div>
+                    <div class="value">${plan.tokens_per_chunk.toLocaleString()}</div>
+                `;
+                costGrid.appendChild(tokensDiv);
+            } else {
+                // 更新現有資訊
+                document.querySelector('#chunksInfo .value').textContent = `${plan.total_chunks} 塊`;
+                document.querySelector('#apiCallsInfo .value').textContent = `${plan.estimated_api_calls} 次`;
+                document.querySelector('#tokensInfo .value').textContent = plan.tokens_per_chunk.toLocaleString();
+            }
+        }
+
+        function updateCostDetails(costData) {
+            const costGrid = document.querySelector('.cost-grid');
+            const plan = costData.analysis_plan;
+            
+            // 檢查是否已有額外資訊元素
+            let chunksElement = document.getElementById('estimatedChunks');
+            if (!chunksElement) {
+                // 創建區塊數顯示
+                const chunksDiv = document.createElement('div');
+                chunksDiv.className = 'cost-item';
+                chunksDiv.innerHTML = `
+                    <div class="label">處理區塊</div>
+                    <div class="value" id="estimatedChunks">${plan.total_chunks} 塊</div>
+                `;
+                costGrid.appendChild(chunksDiv);
+                
+                // 創建 API 調用次數顯示
+                const apiDiv = document.createElement('div');
+                apiDiv.className = 'cost-item';
+                apiDiv.innerHTML = `
+                    <div class="label">API 調用</div>
+                    <div class="value" id="estimatedAPICalls">${plan.estimated_api_calls} 次</div>
+                `;
+                costGrid.appendChild(apiDiv);
+                
+                // 創建 Token 資訊顯示
+                const tokenDiv = document.createElement('div');
+                tokenDiv.className = 'cost-item';
+                tokenDiv.innerHTML = `
+                    <div class="label">總 Tokens</div>
+                    <div class="value" id="estimatedTotalTokens">${costData.file_info.estimated_tokens.toLocaleString()}</div>
+                `;
+                costGrid.appendChild(tokenDiv);
+            } else {
+                // 更新現有元素
+                document.getElementById('estimatedChunks').textContent = `${plan.total_chunks} 塊`;
+                document.getElementById('estimatedAPICalls').textContent = `${plan.estimated_api_calls} 次`;
+                document.getElementById('estimatedTotalTokens').textContent = 
+                    costData.file_info.estimated_tokens.toLocaleString();
             }
         }
 
@@ -1795,6 +1951,41 @@
                     }
                 });
             }
+
+            // 如果有預估成本和實際成本，顯示對比
+            if (window.estimatedCost && chartData.totalCost) {
+                const difference = chartData.totalCost - window.estimatedCost;
+                const percentDiff = (difference / window.estimatedCost * 100).toFixed(1);
+                
+                // 在統計頁面顯示成本對比
+                const comparisonHtml = `
+                    <div class="cost-comparison">
+                        <h4>成本對比</h4>
+                        <div class="comparison-grid">
+                            <div class="comparison-item">
+                                <div class="label">預估成本</div>
+                                <div class="value">$${window.estimatedCost.toFixed(4)}</div>
+                            </div>
+                            <div class="comparison-item">
+                                <div class="label">實際成本</div>
+                                <div class="value">$${chartData.totalCost.toFixed(4)}</div>
+                            </div>
+                            <div class="comparison-item">
+                                <div class="label">差異</div>
+                                <div class="value ${percentDiff > 0 ? 'text-danger' : 'text-success'}">
+                                    ${percentDiff > 0 ? '+' : ''}${percentDiff}%
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                // 插入到統計標籤
+                const statsTab = document.getElementById('statsTab');
+                const comparisonDiv = document.createElement('div');
+                comparisonDiv.innerHTML = comparisonHtml;
+                statsTab.insertBefore(comparisonDiv, statsTab.firstChild);
+            }            
         }
 
         // Tab Switching Setup

@@ -40,6 +40,7 @@ class CostEstimate:
     analysis_time_estimate: float  # 分鐘
     is_within_budget: bool
     warnings: List[str]
+    api_calls: int = 1  # 新增這個欄位，預設值為 1    
 
 class CostCalculator:
     """成本計算器"""
@@ -141,23 +142,36 @@ class CostCalculator:
         Returns:
             (input_tokens, output_tokens)
         """
-        # 基本估算：1KB ≈ 250-500 tokens（取決於內容）
+        # 轉換為字符數（1KB ≈ 1024 字符）
         chars = file_size_kb * 1024
         
+        # 根據 provider 使用不同的估算方式
         if provider == ModelProvider.ANTHROPIC:
-            # Anthropic: 約 0.4 tokens per char
-            input_tokens = int(chars * 0.4)
+            # Claude 的 token 估算
+            # 英文：約 4 字符/token，中文：約 2 字符/token
+            # 假設混合內容，平均 3 字符/token
+            input_tokens = int(chars / 3)
         else:
-            # OpenAI: 約 0.25 tokens per char
-            input_tokens = int(chars * 0.25)
+            # OpenAI 的 token 估算
+            # 使用 GPT 的標準：約 4 字符/token
+            input_tokens = int(chars / 4)
         
-        # 輸出 tokens 估算：通常是輸入的 20-50%
-        output_tokens = int(input_tokens * 0.3)
+        # 輸出 tokens 估算：根據分析模式調整
+        # 這裡需要更精確的估算
+        output_ratio = {
+            'quick': 0.2,      # 快速模式：輸出較少
+            'intelligent': 0.4, # 智能模式：中等輸出
+            'large_file': 0.5,  # 大檔模式：較多輸出
+            'max_token': 0.8    # 深度模式：最多輸出
+        }
+        
+        # 預設使用 intelligent 模式的比例
+        output_tokens = int(input_tokens * 0.4)
         
         return input_tokens, output_tokens
     
     def calculate_cost(self, file_size_kb: float, model: str, 
-                      budget: float = 10.0) -> CostEstimate:
+                  budget: float = 10.0) -> CostEstimate:
         """計算單一模型的成本"""
         if model not in self._model_info_cache:
             raise ValueError(f"Unknown model: {model}")
@@ -168,15 +182,20 @@ class CostCalculator:
         # 估算 tokens
         input_tokens, output_tokens = self.estimate_tokens(file_size_kb, provider)
         
-        # 計算成本
-        input_cost = (input_tokens / 1000) * model_info.input_cost_per_1k
-        output_cost = (output_tokens / 1000) * model_info.output_cost_per_1k
+        # 計算成本 - 確保價格是每 1000 tokens 的單位
+        input_cost = (input_tokens / 1000.0) * model_info.input_cost_per_1k
+        output_cost = (output_tokens / 1000.0) * model_info.output_cost_per_1k
         total_cost = input_cost + output_cost
         
         # 估算處理時間（基於模型速度評級和檔案大小）
         base_time = file_size_kb / 100  # 基礎時間：每 100KB 1 分鐘
         speed_factor = 6 - model_info.speed_rating  # 速度因子
         analysis_time = base_time * speed_factor
+        
+        # 計算需要的 API 調用次數（分塊）
+        tokens_per_chunk = int(model_info.context_window * 0.7)  # 保留 30% 作為 buffer
+        total_tokens = input_tokens
+        api_calls = max(1, (total_tokens + tokens_per_chunk - 1) // tokens_per_chunk)
         
         # 檢查預算和生成警告
         warnings = []
@@ -185,8 +204,8 @@ class CostCalculator:
         if not is_within_budget:
             warnings.append(f"預估成本 ${total_cost:.2f} 超過預算 ${budget:.2f}")
         
-        if input_tokens > model_info.context_window:
-            warnings.append(f"檔案可能需要分塊處理（超過 {model_info.context_window} tokens）")
+        if api_calls > 1:
+            warnings.append(f"檔案將分成 {api_calls} 個區塊處理")
         
         if analysis_time > 10:
             warnings.append(f"預計需要較長處理時間（{analysis_time:.1f} 分鐘）")
@@ -202,7 +221,8 @@ class CostCalculator:
             total_cost=total_cost,
             analysis_time_estimate=analysis_time,
             is_within_budget=is_within_budget,
-            warnings=warnings
+            warnings=warnings,
+            api_calls=api_calls  # 新增 API 調用次數
         )
     
     def compare_models_cost(self, file_size_kb: float, mode: AnalysisMode, 

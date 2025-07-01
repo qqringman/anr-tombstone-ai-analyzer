@@ -201,6 +201,8 @@ def analyze_with_cancellation():
             
             # 轉換參數
             from src.config.base import AnalysisMode, ModelProvider
+            from src.utils.cost_calculator import CostCalculator
+            
             try:
                 analysis_mode = AnalysisMode(mode)
             except ValueError:
@@ -237,63 +239,70 @@ def analyze_with_cancellation():
             else:
                 analyzer = wrapper._tombstone_analyzer
             
-            # 初始化統計
-            chunk_count = 0
-            total_content = []
-            input_tokens = 0
-            output_tokens = 0
+            # 初始化成本計算器
+            cost_calculator = CostCalculator()
             
-            # 估算輸入 tokens
-            input_tokens = wrapper.config.estimate_tokens(content)
+            # 計算檔案大小（KB）
+            file_size_kb = len(content.encode('utf-8')) / 1024
             
-            # 獲取模型配置用於成本計算
+            # 獲取模型配置
             model = wrapper.config.get_model_for_mode(analysis_mode)
             model_config = wrapper.config.get_model_config(model)
             
-            # 計算輸入成本
-            input_cost = (input_tokens / 1000.0) * model_config.input_cost_per_1k
+            # 使用統一的 token 估算方法
+            estimated_input_tokens, estimated_output_tokens = cost_calculator.estimate_tokens(
+                file_size_kb, 
+                model_provider or ModelProvider.ANTHROPIC
+            )
+            
+            # 如果 wrapper 有更準確的估算方法，使用它
+            if hasattr(wrapper.config, 'estimate_tokens'):
+                actual_input_tokens = wrapper.config.estimate_tokens(content)
+            else:
+                actual_input_tokens = estimated_input_tokens
+            
+            # 計算初始成本（只有輸入）
+            initial_input_cost = (actual_input_tokens / 1000.0) * model_config.input_cost_per_1k
             
             # 立即發送初始進度
             progress_data = {
                 'progress_percentage': 0,
                 'current_chunk': 0,
                 'total_chunks': 1,
-                'input_tokens': input_tokens,
+                'input_tokens': actual_input_tokens,
                 'output_tokens': 0,
-                'total_cost': input_cost  # 初始只有輸入成本
+                'total_cost': initial_input_cost,
+                'cost_breakdown': {
+                    'input_cost': initial_input_cost,
+                    'output_cost': 0,
+                    'model': model,
+                    'provider': wrapper.provider.value,
+                    'input_price_per_1k': model_config.input_cost_per_1k,
+                    'output_price_per_1k': model_config.output_cost_per_1k
+                }
             }
             yield f"data: {json.dumps({'type': 'progress', 'progress': progress_data})}\n\n"
             
             # 執行分析
+            chunk_count = 0
+            total_content = []
+            accumulated_output = ""
+            last_progress_time = time.time()
+            
             async def run_analysis():
-                nonlocal chunk_count, input_tokens, output_tokens
-                
-                # 初始化時間追蹤變數
-                last_progress_time = time.time()
-                cancelled = False
+                nonlocal chunk_count, accumulated_output, last_progress_time
                 
                 try:
                     # 使用 analyzer 分析
                     async for chunk in analyzer.analyze(content, analysis_mode, token):
                         # 檢查是否已取消
                         if token.is_cancelled:
-                            cancelled = True
-                            break
+                            yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
+                            return
                             
                         total_content.append(chunk)
+                        accumulated_output += chunk
                         chunk_count += 1
-                        
-                        # 估算輸出 tokens (累積)
-                        current_output = ''.join(total_content)
-                        output_tokens = wrapper.config.estimate_tokens(current_output)
-                        
-                        # 計算成本（確保使用正確的單位）
-                        input_cost = (input_tokens / 1000.0) * model_config.input_cost_per_1k
-                        output_cost = (output_tokens / 1000.0) * model_config.output_cost_per_1k
-                        current_total_cost = input_cost + output_cost
-                        
-                        # 計算進度
-                        estimated_progress = min(chunk_count * 5, 90)  # 最多到 90%
                         
                         # 發送內容
                         yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
@@ -301,23 +310,57 @@ def analyze_with_cancellation():
                         # 獲取當前時間
                         current_time = time.time()
                         
-                        # 每 3 個 chunk 或每 300ms 更新一次進度
-                        if chunk_count % 3 == 0 or (current_time - last_progress_time) > 0.3:
+                        # 每 3 個 chunk 或每 500ms 更新一次進度
+                        if chunk_count % 3 == 0 or (current_time - last_progress_time) > 0.5:
+                            # 計算當前輸出 tokens
+                            if hasattr(wrapper.config, 'estimate_tokens'):
+                                current_output_tokens = wrapper.config.estimate_tokens(accumulated_output)
+                            else:
+                                # 使用 cost_calculator 的估算
+                                output_size_kb = len(accumulated_output.encode('utf-8')) / 1024
+                                _, current_output_tokens = cost_calculator.estimate_tokens(
+                                    output_size_kb, 
+                                    model_provider or ModelProvider.ANTHROPIC
+                                )
+                            
+                            # 計算當前成本
+                            current_input_cost = (actual_input_tokens / 1000.0) * model_config.input_cost_per_1k
+                            current_output_cost = (current_output_tokens / 1000.0) * model_config.output_cost_per_1k
+                            current_total_cost = current_input_cost + current_output_cost
+
+                            # 確保成本在合理範圍內
+                            if current_total_cost > 1000:  # 如果成本超過 $1000，可能有錯誤
+                                print(f"Warning: Unusually high cost detected: ${current_total_cost}")
+                                print(f"Input tokens: {actual_input_tokens}, Output tokens: {current_output_tokens}")
+                                print(f"Input price: ${model_config.input_cost_per_1k}/1k, Output price: ${model_config.output_cost_per_1k}/1k")
+                                                            
+                            # 計算進度百分比
+                            # 基於輸出 tokens 相對於預期輸出的比例
+                            progress_percentage = min(
+                                (current_output_tokens / max(estimated_output_tokens, 1)) * 100, 
+                                90
+                            )
+                            
+                            # 更新進度數據
                             progress_data = {
-                                'progress_percentage': estimated_progress,
+                                'progress_percentage': progress_percentage,
                                 'current_chunk': chunk_count,
                                 'total_chunks': max(chunk_count + 5, 10),
-                                'input_tokens': input_tokens,
-                                'output_tokens': output_tokens,
-                                'total_cost': current_total_cost
+                                'input_tokens': actual_input_tokens,
+                                'output_tokens': current_output_tokens,
+                                'total_cost': current_total_cost,
+                                'cost_breakdown': {
+                                    'input_cost': current_input_cost,
+                                    'output_cost': current_output_cost,
+                                    'model': model,
+                                    'provider': wrapper.provider.value,
+                                    'input_price_per_1k': model_config.input_cost_per_1k,
+                                    'output_price_per_1k': model_config.output_cost_per_1k
+                                }
                             }
                             yield f"data: {json.dumps({'type': 'progress', 'progress': progress_data})}\n\n"
                             last_progress_time = current_time
                     
-                    if cancelled:
-                        yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
-                        return
-                        
                 except Exception as e:
                     if "CancellationException" in str(type(e).__name__):
                         yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
@@ -325,29 +368,45 @@ def analyze_with_cancellation():
                     else:
                         raise
                 
-                # 最終統計
-                total_text = ''.join(total_content)
-                final_output_tokens = wrapper.config.estimate_tokens(total_text)
+                # 分析完成，計算最終統計
+                final_output = ''.join(total_content)
+                
+                # 計算最終的 tokens
+                if hasattr(wrapper.config, 'estimate_tokens'):
+                    final_output_tokens = wrapper.config.estimate_tokens(final_output)
+                else:
+                    output_size_kb = len(final_output.encode('utf-8')) / 1024
+                    _, final_output_tokens = cost_calculator.estimate_tokens(
+                        output_size_kb, 
+                        model_provider or ModelProvider.ANTHROPIC
+                    )
                 
                 # 計算最終成本
-                final_input_cost = (input_tokens / 1000.0) * model_config.input_cost_per_1k
+                final_input_cost = (actual_input_tokens / 1000.0) * model_config.input_cost_per_1k
                 final_output_cost = (final_output_tokens / 1000.0) * model_config.output_cost_per_1k
                 final_total_cost = final_input_cost + final_output_cost
                 
-                # 發送最終進度
+                # 發送最終進度（100%）
                 final_progress = {
                     'progress_percentage': 100,
                     'current_chunk': chunk_count,
                     'total_chunks': chunk_count,
-                    'input_tokens': input_tokens,
+                    'input_tokens': actual_input_tokens,
                     'output_tokens': final_output_tokens,
                     'total_cost': final_total_cost,
                     'cost_breakdown': {
                         'input_cost': final_input_cost,
                         'output_cost': final_output_cost,
+                        'total': final_total_cost,
                         'model': model,
+                        'provider': wrapper.provider.value,
                         'input_price_per_1k': model_config.input_cost_per_1k,
                         'output_price_per_1k': model_config.output_cost_per_1k
+                    },
+                    'summary': {
+                        'total_tokens': actual_input_tokens + final_output_tokens,
+                        'chunks_processed': chunk_count,
+                        'content_length': len(final_output)
                     }
                 }
                 yield f"data: {json.dumps({'type': 'progress', 'progress': final_progress})}\n\n"
@@ -465,7 +524,7 @@ def estimate_cost():
         mode = data.get('mode', 'intelligent')
         provider = data.get('provider', 'anthropic')
         
-        # 使用 CostCalculator
+        # 使用 CostCalculator 進行統一計算
         from src.utils.cost_calculator import CostCalculator
         from src.config.base import AnalysisMode, ModelProvider
         
@@ -479,7 +538,7 @@ def estimate_cost():
             analysis_mode = AnalysisMode.INTELLIGENT
             model_provider = ModelProvider.ANTHROPIC
         
-        # 獲取模型
+        # 獲取該模式下的模型
         if model_provider == ModelProvider.ANTHROPIC:
             from src.config.anthropic_config import AnthropicApiConfig
             config = AnthropicApiConfig()
@@ -488,45 +547,63 @@ def estimate_cost():
             config = OpenApiConfig()
         
         model = config.get_model_for_mode(analysis_mode)
+        model_config = config.get_model_config(model)
         
         # 計算成本
         estimate = calculator.calculate_cost(file_size_kb, model)
         
-        # 計算 rate limit 影響
-        rate_limit_info = calculate_rate_limited_time(file_size_kb, model, provider)
+        # 單獨計算分塊資訊
+        input_tokens = estimate.estimated_input_tokens
+        context_window = model_config.context_window
+        effective_context = int(context_window * 0.7)  # 保留 30% buffer
         
-        # 合併時間估算
-        # 取 rate limit 時間和模型處理時間的較大值
-        actual_time = max(
-            estimate.analysis_time_estimate,
-            rate_limit_info['rate_limit_info']['actual_time_minutes']
-        )
+        # 計算需要多少個 chunks
+        chunks_needed = max(1, (input_tokens + effective_context - 1) // effective_context)
         
-        return jsonify({
+        # 計算 rate limit 影響（如果函數存在）
+        rate_limit_info = None
+        try:
+            rate_limit_info = calculate_rate_limited_time(file_size_kb, model, provider)
+        except:
+            pass
+        
+        response_data = {
             "status": "success",
             "data": {
                 "file_info": {
                     "size_kb": file_size_kb,
-                    "estimated_tokens": estimate.estimated_input_tokens
+                    "estimated_tokens": estimate.estimated_input_tokens + estimate.estimated_output_tokens,
+                    "input_tokens": estimate.estimated_input_tokens,
+                    "output_tokens": estimate.estimated_output_tokens
                 },
                 "cost_estimates": [{
                     "provider": estimate.provider,
                     "model": estimate.model,
-                    "total_cost": estimate.total_cost,
-                    "input_cost": estimate.input_cost,
-                    "output_cost": estimate.output_cost,
-                    "analysis_time_minutes": actual_time,
-                    "api_queries_needed": rate_limit_info['queries_needed'],
-                    "rate_limit_factor": rate_limit_info['rate_limit_info']['rate_limiting_factor'],
-                    "can_complete_today": rate_limit_info['can_complete_today'],
+                    "total_cost": round(estimate.total_cost, 4),  # 限制小數位數
+                    "input_cost": round(estimate.input_cost, 4),
+                    "output_cost": round(estimate.output_cost, 4),
+                    "analysis_time_minutes": estimate.analysis_time_estimate,
+                    "api_queries_needed": chunks_needed,
+                    "chunks_to_process": chunks_needed,
                     "warnings": estimate.warnings
                 }],
-                "rate_limit_details": rate_limit_info['rate_limit_info'],
+                "analysis_plan": {
+                    "total_chunks": chunks_needed,
+                    "tokens_per_chunk": effective_context,
+                    "estimated_api_calls": chunks_needed,
+                    "parallel_possible": chunks_needed > 1
+                },
                 "recommended_mode": "quick" if file_size_kb < 100 else 
                                    "intelligent" if file_size_kb < 1000 else 
                                    "large_file"
             }
-        })
+        }
+        
+        # 如果有 rate limit 資訊，添加進去
+        if rate_limit_info:
+            response_data["data"]["rate_limit_details"] = rate_limit_info.get('rate_limit_info', {})
+        
+        return jsonify(response_data)
         
     except Exception as e:
         import traceback
