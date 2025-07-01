@@ -1115,6 +1115,25 @@
         async function startAnalysis() {
             if (!currentFile) return;
 
+            // 重置圖表數據
+            chartData = {
+                inputTokens: 0,
+                outputTokens: 0,
+                totalCost: 0,
+                tokenHistory: []
+            };
+            
+            // 清除之前的結果
+            clearResults();
+
+            // 確保結果區域和統計標籤可見
+            document.getElementById('resultsSection').classList.add('active');
+            
+            // 初始化空圖表
+            setTimeout(() => {
+                updateLiveCharts();
+            }, 100);
+
             const logType = document.querySelector('input[name="logType"]:checked').value;
             const mode = document.querySelector('input[name="analysisMode"]:checked').value;
             const provider = document.querySelector('input[name="provider"]:checked').value;
@@ -1317,7 +1336,15 @@
                 eventSource.close();
                 eventSource = null;
             }
-
+            // 清除自動保存
+            if (autoSaveTimer) {
+                clearInterval(autoSaveTimer);
+                autoSaveTimer = null;
+            }
+            
+            // 清除草稿
+            localStorage.removeItem('draft_analysis');
+            
             document.getElementById('analyzeBtn').disabled = false;
             document.querySelector('#analyzeBtn .spinner').style.display = 'none';
             document.querySelector('#analyzeBtn span:last-child').textContent = '開始分析';
@@ -1374,16 +1401,31 @@
             }
             
             // 即時更新圖表
-            if (chartNeedsUpdate && chartData.inputTokens + chartData.outputTokens > 0) {
-                updateLiveCharts();
-            }
+            //if (chartNeedsUpdate && chartData.inputTokens + chartData.outputTokens > 0) {
+            //    updateLiveCharts();
+            //}
+
+            // 確保圖表更新 - 添加節流控制
+            if (!window.chartUpdateThrottle) {
+                window.chartUpdateThrottle = setTimeout(() => {
+                    updateLiveCharts();
+                    window.chartUpdateThrottle = null;
+                }, 200); // 每200ms最多更新一次
+            }            
         }
 
         // 即時更新圖表函數
         function updateLiveCharts() {
+            // 確保統計標籤處於活動狀態時才更新
+            const statsTab = document.getElementById('statsTab');
+            if (!statsTab || !statsTab.classList.contains('active')) {
+                // 如果統計標籤不是活動的，暫存更新
+                return;
+            }
+            
             // 更新 Token 使用圖表
             const tokenCanvas = document.getElementById('tokenChart');
-            if (tokenCanvas) {
+            if (tokenCanvas && tokenCanvas.offsetParent !== null) {  // 檢查元素是否可見
                 const tokenCtx = tokenCanvas.getContext('2d');
                 
                 // 檢查是否已有圖表
@@ -1396,15 +1438,16 @@
                         data: {
                             labels: ['輸入 Tokens', '輸出 Tokens'],
                             datasets: [{
-                                data: [chartData.inputTokens, chartData.outputTokens],
-                                backgroundColor: ['#3b82f6', '#10b981']
+                                data: [chartData.inputTokens || 1, chartData.outputTokens || 1],  // 避免空圖表
+                                backgroundColor: ['#3b82f6', '#10b981'],
+                                borderWidth: 0
                             }]
                         },
                         options: {
                             responsive: true,
                             maintainAspectRatio: false,
                             animation: {
-                                duration: 200
+                                duration: 300
                             },
                             plugins: {
                                 legend: {
@@ -1412,21 +1455,30 @@
                                 },
                                 title: {
                                     display: true,
-                                    text: 'Token 使用統計 (即時)'
+                                    text: 'Token 使用統計 (即時)',
+                                    font: {
+                                        size: 14
+                                    }
                                 }
                             }
                         }
                     });
+                    
+                    // 保存圖表引用
+                    window.tokenChart = tokenChart;
                 } else {
                     // 更新現有圖表數據
-                    tokenChart.data.datasets[0].data = [chartData.inputTokens, chartData.outputTokens];
+                    tokenChart.data.datasets[0].data = [
+                        chartData.inputTokens || 1, 
+                        chartData.outputTokens || 1
+                    ];
                     tokenChart.update('active');
                 }
             }
             
             // 更新成本圖表
             const costCanvas = document.getElementById('costChart');
-            if (costCanvas) {
+            if (costCanvas && costCanvas.offsetParent !== null) {  // 檢查元素是否可見
                 const costCtx = costCanvas.getContext('2d');
                 
                 let costChart = Chart.getChart(costCanvas);
@@ -1436,18 +1488,19 @@
                     costChart = new Chart(costCtx, {
                         type: 'bar',
                         data: {
-                            labels: ['當前成本'],
+                            labels: ['輸入成本', '輸出成本', '總成本'],
                             datasets: [{
                                 label: '成本 (USD)',
-                                data: [chartData.totalCost],
-                                backgroundColor: ['#f59e0b']
+                                data: [0, 0, chartData.totalCost || 0],
+                                backgroundColor: ['#3b82f6', '#10b981', '#f59e0b'],
+                                borderRadius: 8
                             }]
                         },
                         options: {
                             responsive: true,
                             maintainAspectRatio: false,
                             animation: {
-                                duration: 200
+                                duration: 300
                             },
                             scales: {
                                 y: {
@@ -1465,14 +1518,27 @@
                                 },
                                 title: {
                                     display: true,
-                                    text: '成本分析 (即時)'
+                                    text: '成本分析 (即時)',
+                                    font: {
+                                        size: 14
+                                    }
                                 }
                             }
                         }
                     });
+                    
+                    // 保存圖表引用
+                    window.costChart = costChart;
                 } else {
-                    // 更新現有圖表數據
-                    costChart.data.datasets[0].data = [chartData.totalCost];
+                    // 計算輸入和輸出成本（簡單估算）
+                    const inputCost = chartData.totalCost * (chartData.inputTokens / (chartData.inputTokens + chartData.outputTokens)) || 0;
+                    const outputCost = chartData.totalCost * (chartData.outputTokens / (chartData.inputTokens + chartData.outputTokens)) || 0;
+                    
+                    costChart.data.datasets[0].data = [
+                        inputCost,
+                        outputCost,
+                        chartData.totalCost || 0
+                    ];
                     costChart.update('active');
                 }
             }
@@ -1689,6 +1755,13 @@
             });
             
             document.getElementById(`${tabName}Tab`).classList.add('active');
+            
+            // 如果切換到統計標籤，更新圖表
+            if (tabName === 'stats') {
+                setTimeout(() => {
+                    updateLiveCharts();
+                }, 100);
+            }
         }
 
         // Utility Functions
@@ -1783,10 +1856,35 @@
             URL.revokeObjectURL(url);
         }
 
-        function copyResults() {
-            navigator.clipboard.writeText(analysisResults.raw).then(() => {
+        async function copyResults() {
+            try {
+                const content = analysisResults.raw || analysisResults.content || '';
+                
+                if (!content) {
+                    showMessage('沒有可複製的內容', 'warning');
+                    return;
+                }
+                
+                await navigator.clipboard.writeText(content);
                 showMessage('已複製到剪貼簿', 'success');
-            });
+            } catch (err) {
+                // 降級方案
+                const textArea = document.createElement('textarea');
+                textArea.value = analysisResults.raw || analysisResults.content || '';
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-999999px';
+                document.body.appendChild(textArea);
+                textArea.select();
+                
+                try {
+                    document.execCommand('copy');
+                    showMessage('已複製到剪貼簿', 'success');
+                } catch (err) {
+                    showMessage('複製失敗，請手動選擇並複製', 'error');
+                }
+                
+                document.body.removeChild(textArea);
+            }
         }
 
         // Check API Status
@@ -1805,6 +1903,25 @@
             }
         }
 
+        // 修改自動保存功能，添加清理機制
+        let autoSaveTimer = null;
+        function startAutoSave() {
+            // 清除之前的計時器
+            if (autoSaveTimer) {
+                clearInterval(autoSaveTimer);
+            }
+            
+            autoSaveTimer = setInterval(() => {
+                if (currentFile && analysisResults.content && AppState.isAnalyzing) {
+                    localStorage.setItem('draft_analysis', JSON.stringify({
+                        fileName: currentFile.name,
+                        results: analysisResults,
+                        timestamp: new Date().toISOString()
+                    }));
+                }
+            }, 30000); // 每30秒保存一次
+        }
+
         // Auto-save draft
         setInterval(() => {
             if (currentFile && analysisResults.content) {
@@ -1820,12 +1937,27 @@
         window.addEventListener('load', () => {
             const draft = localStorage.getItem('draft_analysis');
             if (draft) {
-                const data = JSON.parse(draft);
-                const confirm = window.confirm(`發現未完成的分析 (${data.fileName})，是否恢復？`);
-                if (confirm) {
-                    analysisResults = data.results;
-                    updateResultsDisplay();
-                    document.getElementById('resultsSection').classList.add('active');
+                try {
+                    const data = JSON.parse(draft);
+                    // 檢查草稿是否過期（24小時）
+                    const draftTime = new Date(data.timestamp);
+                    const now = new Date();
+                    const hoursDiff = (now - draftTime) / (1000 * 60 * 60);
+                    
+                    if (hoursDiff < 24) {
+                        const confirmRestore = window.confirm(`發現未完成的分析 (${data.fileName})，是否恢復？`);
+                        if (confirmRestore) {
+                            analysisResults = data.results;
+                            updateResultsDisplay();
+                            document.getElementById('resultsSection').classList.add('active');
+                        }
+                    }
+                    
+                    // 無論是否恢復，都清除草稿
+                    localStorage.removeItem('draft_analysis');
+                } catch (e) {
+                    console.error('Failed to parse draft:', e);
+                    localStorage.removeItem('draft_analysis');
                 }
             }
         });
