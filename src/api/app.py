@@ -1,4 +1,4 @@
-# src/api/app.py
+﻿# src/api/app.py
 """
 ANR/Tombstone AI 分析系統 - Flask 應用程式
 """
@@ -197,69 +197,163 @@ def analyze_with_cancellation():
                 yield f"data: {json.dumps({'type': 'error', 'error': 'Engine not initialized'})}\n\n"
                 return
             
-            # 設置 provider
-            if provider:
-                try:
-                    from src.config.base import ModelProvider
-                    engine.set_provider(ModelProvider(provider))
-                except Exception as e:
-                    print(f"[DEBUG] Failed to set provider: {e}")
+            # 轉換參數
+            from src.config.base import AnalysisMode, ModelProvider
+            try:
+                analysis_mode = AnalysisMode(mode)
+            except ValueError:
+                analysis_mode = AnalysisMode.INTELLIGENT
             
-            # 使用同步包裝
+            try:
+                model_provider = ModelProvider(provider) if provider else None
+            except ValueError:
+                model_provider = None
+            
+            # 設置 provider
+            if model_provider:
+                engine.set_provider(model_provider)
+            
+            # 創建取消令牌
+            from src.core.cancellation import CancellationToken
+            token = CancellationToken(analysis_id)
+            
+            # 獲取 wrapper
+            wrapper = engine._wrappers.get(engine._current_provider)
+            if not wrapper:
+                yield f"data: {json.dumps({'type': 'error', 'error': 'No wrapper available'})}\n\n"
+                return
+            
+            # 選擇分析器
+            if log_type.lower() == 'anr':
+                analyzer = wrapper._anr_analyzer
+            else:
+                analyzer = wrapper._tombstone_analyzer
+            
+            # 初始化統計
             chunk_count = 0
+            total_content = []
             input_tokens = 0
             output_tokens = 0
             
-            for chunk in engine.analyze_sync_wrapper(content, log_type, mode, provider):
-                # 檢查是否是錯誤
-                if chunk.startswith("ERROR:"):
-                    yield f"data: {json.dumps({'type': 'error', 'error': chunk[7:]})}\n\n"
-                    break
+            # 估算輸入 tokens
+            input_tokens = wrapper.config.estimate_tokens(content)
+            
+            # 立即發送初始進度
+            progress_data = {
+                'progress_percentage': 0,
+                'current_chunk': 0,
+                'total_chunks': 1,  # 預估
+                'input_tokens': input_tokens,
+                'output_tokens': 0
+            }
+            yield f"data: {json.dumps({'type': 'progress', 'progress': progress_data})}\n\n"
+            
+            # 執行分析
+            async def run_analysis():
+                nonlocal chunk_count, input_tokens, output_tokens
                 
-                # 檢查是否是統計資訊
-                elif chunk.startswith("\n\n---STATS---\n"):
+                # 初始化時間追蹤變數
+                last_progress_time = time.time()
+                
+                # 使用 analyzer 分析
+                async for chunk in analyzer.analyze(content, analysis_mode, token):
+                    total_content.append(chunk)
+                    chunk_count += 1
+                    
+                    # 估算輸出 tokens (累積)
+                    current_output = ''.join(total_content)
+                    output_tokens = wrapper.config.estimate_tokens(current_output)
+                    
+                    # 計算進度
+                    estimated_progress = min(chunk_count * 5, 90)  # 最多到 90%
+                    
+                    # 發送內容
+                    yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+                    
+                    # 獲取當前時間
+                    current_time = time.time()
+                    
+                    # 每 5 個 chunk 或每 500ms 更新一次進度
+                    if chunk_count % 5 == 0 or (current_time - last_progress_time) > 0.5:
+                        progress_data = {
+                            'progress_percentage': estimated_progress,
+                            'current_chunk': chunk_count,
+                            'total_chunks': chunk_count + 10,  # 動態估算
+                            'input_tokens': input_tokens,
+                            'output_tokens': output_tokens
+                        }
+                        yield f"data: {json.dumps({'type': 'progress', 'progress': progress_data})}\n\n"
+                        last_progress_time = current_time
+                
+                # 最終統計
+                total_text = ''.join(total_content)
+                final_output_tokens = wrapper.config.estimate_tokens(total_text)
+                
+                # 計算成本
+                model = wrapper.config.get_model_for_mode(analysis_mode)
+                cost = wrapper.calculate_cost(input_tokens, final_output_tokens, model)
+                
+                # 發送最終進度
+                final_progress = {
+                    'progress_percentage': 100,
+                    'current_chunk': chunk_count,
+                    'total_chunks': chunk_count,
+                    'input_tokens': input_tokens,
+                    'output_tokens': final_output_tokens,
+                    'total_cost': cost
+                }
+                yield f"data: {json.dumps({'type': 'progress', 'progress': final_progress})}\n\n"
+                
+                # 更新資料庫（如果有整合）
+                if hasattr(engine, 'storage'):
                     try:
-                        stats_json = chunk.replace("\n\n---STATS---\n", "")
-                        stats = json.loads(stats_json)
-                        input_tokens = stats.get('input_tokens', 0)
-                        output_tokens = stats.get('output_tokens', 0)
+                        await engine.storage.update_analysis_result(
+                            analysis_id,
+                            total_text,
+                            input_tokens,
+                            final_output_tokens,
+                            cost,
+                            "completed"
+                        )
                     except:
                         pass
-                    continue
                 
-                # 發送內容
-                yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
-                chunk_count += 1
+                # 發送完成事件
+                yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+            
+            # 使用 asyncio 運行分析
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            try:
+                # 轉換異步生成器為同步
+                async_gen = run_analysis()
+                while True:
+                    try:
+                        future = asyncio.run_coroutine_threadsafe(
+                            async_gen.__anext__(),
+                            async_loop
+                        )
+                        result = future.result(timeout=30)  # 30秒超時
+                        yield result
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        yield f"data: {json.dumps({'type': 'error', 'error': 'Analysis timeout'})}\n\n"
+                        break
+                        
+            except Exception as e:
+                import traceback
+                error_msg = f"{str(e)}\n{traceback.format_exc()}"
+                yield f"data: {json.dumps({'type': 'error', 'error': error_msg})}\n\n"
+            finally:
+                loop.close()
                 
-                # 定期發送進度
-                if chunk_count % 10 == 0:
-                    progress = {
-                        'progress_percentage': min(chunk_count * 2, 90),
-                        'current_chunk': chunk_count,
-                        'total_chunks': chunk_count + 10,
-                        'input_tokens': input_tokens,
-                        'output_tokens': output_tokens
-                    }
-                    yield f"data: {json.dumps({'type': 'progress', 'progress': progress})}\n\n"
-            
-            # 發送最終進度
-            final_progress = {
-                'progress_percentage': 100,
-                'current_chunk': chunk_count,
-                'total_chunks': chunk_count,
-                'input_tokens': input_tokens,
-                'output_tokens': output_tokens
-            }
-            yield f"data: {json.dumps({'type': 'progress', 'progress': final_progress})}\n\n"
-            
-            # 發送完成事件
-            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
-            
         except Exception as e:
-            print(f"[DEBUG] Error in analysis: {e}")
             import traceback
-            traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+            error_msg = f"{str(e)}\n{traceback.format_exc()}"
+            yield f"data: {json.dumps({'type': 'error', 'error': error_msg})}\n\n"
     
     return Response(
         generate(),

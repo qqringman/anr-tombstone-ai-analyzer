@@ -812,6 +812,10 @@
                     <div class="label">輸出 Tokens</div>
                     <div class="value" id="outputTokens">0</div>
                 </div>
+                <div class="progress-detail">
+                    <div class="label">當前成本</div>
+                    <div class="value" id="currentCost">$0.00</div>
+                </div>                
             </div>
             
             <div id="statusMessages" style="margin-top: 16px;"></div>
@@ -1169,27 +1173,30 @@
 
         // Handle SSE Messages - Fixed content handling
         function handleSSEMessage(data) {
-            console.log('[DEBUG] SSE Message received:', data);
-            console.log('[DEBUG] Message type:', data.type);
-            console.log('[DEBUG] Current results length:', analysisResults.content.length);
+            console.log('[DEBUG] SSE Message:', data);
             
             try {
                 switch (data.type) {
                     case 'start':
                         if (data.analysis_id) {
                             document.getElementById('analysisId').textContent = `ID: ${data.analysis_id}`;
+                            analysisId = data.analysis_id;
                         }
+                        showMessage('分析開始', 'info');
                         break;
                         
                     case 'content':
-                        console.log('[DEBUG] Content to append:', data.content);
                         if (data.content) {
                             analysisResults.content += data.content;
                             analysisResults.raw += data.content;
-                            console.log('[DEBUG] Total content length now:', analysisResults.content.length);
                             
-                            // 立即更新顯示
-                            updateResultsDisplay();
+                            // 定期更新顯示（每 100ms）
+                            if (!window.updateTimer) {
+                                window.updateTimer = setTimeout(() => {
+                                    updateResultsDisplay();
+                                    window.updateTimer = null;
+                                }, 100);
+                            }
                             
                             // 確保結果區域可見
                             if (!document.getElementById('resultsSection').classList.contains('active')) {
@@ -1199,6 +1206,7 @@
                         break;
                         
                     case 'progress':
+                        // 即時更新進度和 Token 統計
                         updateProgress(data.progress);
                         break;
                         
@@ -1209,6 +1217,14 @@
                         break;
                         
                     case 'complete':
+                        // 清除更新計時器
+                        if (window.updateTimer) {
+                            clearTimeout(window.updateTimer);
+                            window.updateTimer = null;
+                        }
+                        
+                        // 最後一次更新
+                        updateResultsDisplay();
                         showMessage('分析完成！', 'success');
                         stopAnalysis();
                         generateStatistics();
@@ -1265,24 +1281,46 @@
         function updateProgress(progress) {
             if (!progress) return;
             
+            // 更新進度條
             const percent = progress.progress_percentage || progress.percentage || 0;
             document.getElementById('progressBar').style.width = `${percent}%`;
             document.getElementById('progressPercent').textContent = `${percent.toFixed(1)}%`;
             
+            // 更新區塊進度
             if (progress.current_chunk !== undefined && progress.total_chunks !== undefined) {
                 document.getElementById('processedChunks').textContent = 
                     `${progress.current_chunk}/${progress.total_chunks}`;
             }
             
-            // 更新 Token 統計
+            // 即時更新 Token 統計 - 這是重點修改
             if (progress.input_tokens !== undefined) {
-                document.getElementById('inputTokens').textContent = 
-                    progress.input_tokens.toLocaleString();
+                const inputElement = document.getElementById('inputTokens');
+                const currentValue = parseInt(inputElement.textContent.replace(/,/g, '')) || 0;
+                const newValue = progress.input_tokens;
+                
+                // 使用動畫效果更新數字
+                if (currentValue !== newValue) {
+                    animateValue(inputElement, currentValue, newValue, 500);
+                }
             }
             
             if (progress.output_tokens !== undefined) {
-                document.getElementById('outputTokens').textContent = 
-                    progress.output_tokens.toLocaleString();
+                const outputElement = document.getElementById('outputTokens');
+                const currentValue = parseInt(outputElement.textContent.replace(/,/g, '')) || 0;
+                const newValue = progress.output_tokens;
+                
+                // 使用動畫效果更新數字
+                if (currentValue !== newValue) {
+                    animateValue(outputElement, currentValue, newValue, 500);
+                }
+            }
+            
+            // 更新總成本（如果有）
+            if (progress.total_cost !== undefined) {
+                const costElement = document.getElementById('currentCost');
+                if (costElement) {
+                    costElement.textContent = `$${progress.total_cost.toFixed(4)}`;
+                }
             }
         }
 
@@ -1318,6 +1356,28 @@
                 console.error('Error updating results:', error);
                 document.getElementById('analysisContent').textContent = analysisResults.content;
             }
+        }
+
+        // 數字動畫函數
+        function animateValue(element, start, end, duration) {
+            const range = end - start;
+            const startTime = Date.now();
+            
+            const timer = setInterval(function() {
+                const timePassed = Date.now() - startTime;
+                const progress = Math.min(timePassed / duration, 1);
+                
+                // 使用 easeOutQuad 緩動函數
+                const easeProgress = 1 - (1 - progress) * (1 - progress);
+                const current = Math.floor(start + range * easeProgress);
+                
+                element.textContent = current.toLocaleString();
+                
+                if (progress >= 1) {
+                    clearInterval(timer);
+                    element.textContent = end.toLocaleString();
+                }
+            }, 16); // 約 60 FPS
         }
 
         // Generate Statistics
