@@ -10,22 +10,22 @@ class AnthropicApiConfig(BaseApiConfig):
     base_url: str = "https://api.anthropic.com"
     api_version: str = "2023-06-01"
     
-    # Anthropic 模型配置
+    # Anthropic 模型配置 - 修正價格單位（每 1k tokens）
     models: Dict[str, ModelConfig] = {
         # Claude 3.5 系列
         "claude-3-5-haiku-20241022": ModelConfig(
             name="claude-3-5-haiku-20241022",
             max_tokens=8192,
-            input_cost_per_1k=1.0,
-            output_cost_per_1k=5.0,
+            input_cost_per_1k=0.00025,   # $0.25 per million = $0.00025 per 1k
+            output_cost_per_1k=0.00125,  # $1.25 per million = $0.00125 per 1k
             context_window=200000,
             supports_streaming=True
         ),
         "claude-3-5-sonnet-20241022": ModelConfig(
             name="claude-3-5-sonnet-20241022",
             max_tokens=8192,
-            input_cost_per_1k=3.0,
-            output_cost_per_1k=15.0,
+            input_cost_per_1k=0.003,     # $3 per million = $0.003 per 1k
+            output_cost_per_1k=0.015,    # $15 per million = $0.015 per 1k
             context_window=200000,
             supports_streaming=True
         ),
@@ -34,16 +34,16 @@ class AnthropicApiConfig(BaseApiConfig):
         "claude-sonnet-4-20250514": ModelConfig(
             name="claude-sonnet-4-20250514",
             max_tokens=16000,
-            input_cost_per_1k=5.0,
-            output_cost_per_1k=25.0,
+            input_cost_per_1k=0.005,     # $5 per million = $0.005 per 1k
+            output_cost_per_1k=0.025,    # $25 per million = $0.025 per 1k
             context_window=200000,
             supports_streaming=True
         ),
         "claude-opus-4-20250514": ModelConfig(
             name="claude-opus-4-20250514",
             max_tokens=32000,
-            input_cost_per_1k=15.0,
-            output_cost_per_1k=75.0,
+            input_cost_per_1k=0.015,     # $15 per million = $0.015 per 1k
+            output_cost_per_1k=0.075,    # $75 per million = $0.075 per 1k
             context_window=200000,
             supports_streaming=True
         )
@@ -127,6 +127,29 @@ class AnthropicApiConfig(BaseApiConfig):
         
         # 添加 10% 的緩衝
         return int(estimated_tokens * 1.1)
+    
+    def calculate_api_calls(self, file_size_kb: float, mode: AnalysisMode) -> int:
+        """計算需要的 API 調用次數"""
+        # 估算總 tokens
+        chars = file_size_kb * 1024
+        total_tokens = int(chars / 2.5)  # 平均 2.5 字符/token
+        
+        model = self.get_model_for_mode(mode)
+        model_config = self.get_model_config(model)
+        
+        # 根據模式調整有效 context window
+        mode_context_ratio = {
+            AnalysisMode.QUICK: 0.9,
+            AnalysisMode.INTELLIGENT: 0.7,
+            AnalysisMode.LARGE_FILE: 0.6,
+            AnalysisMode.MAX_TOKEN: 0.5
+        }
+        
+        ratio = mode_context_ratio.get(mode, 0.7)
+        effective_context = int(model_config.context_window * ratio)
+        
+        # 計算 API 調用次數
+        return max(1, (total_tokens + effective_context - 1) // effective_context)
     
     def chunk_text(self, text: str, mode: AnalysisMode) -> list[str]:
         """根據模式切分文本"""

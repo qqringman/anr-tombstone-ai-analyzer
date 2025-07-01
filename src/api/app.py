@@ -549,16 +549,21 @@ def estimate_cost():
         model = config.get_model_for_mode(analysis_mode)
         model_config = config.get_model_config(model)
         
-        # 計算成本
-        estimate = calculator.calculate_cost(file_size_kb, model)
+        # 計算成本（包含 mode 參數）
+        estimate = calculator.calculate_cost(file_size_kb, model, mode=analysis_mode)
         
-        # 單獨計算分塊資訊
-        input_tokens = estimate.estimated_input_tokens
-        context_window = model_config.context_window
-        effective_context = int(context_window * 0.7)  # 保留 30% buffer
+        # 獲取分塊資訊（直接從 estimate 中取得）
+        chunks_needed = estimate.api_calls
         
-        # 計算需要多少個 chunks
-        chunks_needed = max(1, (input_tokens + effective_context - 1) // effective_context)
+        # 根據模式計算有效的 context window
+        mode_context_ratio = {
+            AnalysisMode.QUICK: 0.9,
+            AnalysisMode.INTELLIGENT: 0.7,
+            AnalysisMode.LARGE_FILE: 0.6,
+            AnalysisMode.MAX_TOKEN: 0.5
+        }
+        ratio = mode_context_ratio.get(analysis_mode, 0.7)
+        effective_context = int(model_config.context_window * ratio)
         
         # 計算 rate limit 影響（如果函數存在）
         rate_limit_info = None
@@ -591,7 +596,62 @@ def estimate_cost():
                     "total_chunks": chunks_needed,
                     "tokens_per_chunk": effective_context,
                     "estimated_api_calls": chunks_needed,
-                    "parallel_possible": chunks_needed > 1
+                    "parallel_possible": chunks_needed > 1,
+                    "context_window": model_config.context_window,
+                    "effective_context": effective_context,
+                    "mode": mode,
+                    "model": model
+                },
+                "mode_comparison": {
+                    # 顯示不同模式的差異
+                    "quick": {
+                        "chunks": calculator.calculate_api_calls_for_mode(
+                            estimate.estimated_input_tokens, 
+                            model_config.context_window, 
+                            AnalysisMode.QUICK
+                        ),
+                        "api_calls": calculator.calculate_api_calls_for_mode(
+                            estimate.estimated_input_tokens, 
+                            model_config.context_window, 
+                            AnalysisMode.QUICK
+                        )
+                    },
+                    "intelligent": {
+                        "chunks": calculator.calculate_api_calls_for_mode(
+                            estimate.estimated_input_tokens, 
+                            model_config.context_window, 
+                            AnalysisMode.INTELLIGENT
+                        ),
+                        "api_calls": calculator.calculate_api_calls_for_mode(
+                            estimate.estimated_input_tokens, 
+                            model_config.context_window, 
+                            AnalysisMode.INTELLIGENT
+                        )
+                    },
+                    "large_file": {
+                        "chunks": calculator.calculate_api_calls_for_mode(
+                            estimate.estimated_input_tokens, 
+                            model_config.context_window, 
+                            AnalysisMode.LARGE_FILE
+                        ),
+                        "api_calls": calculator.calculate_api_calls_for_mode(
+                            estimate.estimated_input_tokens, 
+                            model_config.context_window, 
+                            AnalysisMode.LARGE_FILE
+                        )
+                    },
+                    "max_token": {
+                        "chunks": calculator.calculate_api_calls_for_mode(
+                            estimate.estimated_input_tokens, 
+                            model_config.context_window, 
+                            AnalysisMode.MAX_TOKEN
+                        ),
+                        "api_calls": calculator.calculate_api_calls_for_mode(
+                            estimate.estimated_input_tokens, 
+                            model_config.context_window, 
+                            AnalysisMode.MAX_TOKEN
+                        )
+                    }
                 },
                 "recommended_mode": "quick" if file_size_kb < 100 else 
                                    "intelligent" if file_size_kb < 1000 else 

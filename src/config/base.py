@@ -57,7 +57,29 @@ class BaseApiConfig(BaseModel, ABC):
     def get_model_config(self, model_name: str) -> ModelConfig:
         """獲取模型配置"""
         pass
-    
+
+    def calculate_api_calls(self, total_tokens: int, mode: AnalysisMode) -> int:
+        """
+        計算需要的 API 調用次數
+        
+        Args:
+            total_tokens: 總 token 數
+            mode: 分析模式
+            
+        Returns:
+            API 調用次數
+        """
+        model = self.get_model_for_mode(mode)
+        model_config = self.get_model_config(model)
+        
+        # 考慮 prompt 和輸出的空間，使用 70% 的 context window
+        effective_context = int(model_config.context_window * 0.7)
+        
+        # 計算需要的 API 調用次數
+        api_calls = max(1, (total_tokens + effective_context - 1) // effective_context)
+        
+        return api_calls
+            
     def calculate_cost(self, input_tokens: int, output_tokens: int, model_name: str) -> float:
         """
         計算 API 調用成本

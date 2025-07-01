@@ -223,7 +223,7 @@
         /* 成本網格優化，支援更多項目 */
         .cost-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
             gap: 16px;
             margin-top: 12px;
         }
@@ -803,6 +803,18 @@
                             <div class="label">推薦模式</div>
                             <div class="value" id="recommendedMode">-</div>
                         </div>
+                        <div class="cost-item">
+                            <div class="label">API 調用</div>
+                            <div class="value" id="apiCalls">-</div>
+                        </div>
+                        <div class="cost-item">
+                            <div class="label">處理區塊</div>
+                            <div class="value" id="totalChunks">-</div>
+                        </div>
+                        <div class="cost-item">
+                            <div class="label">每塊 Tokens</div>
+                            <div class="value" id="tokensPerChunk">-</div>
+                        </div>
                     </div>
                 </div>
 
@@ -1111,6 +1123,7 @@
         }
 
         // Cost Estimation with model-based time
+        // Cost Estimation with model-based time
         async function updateCostEstimation() {
             console.log('[DEBUG] updateCostEstimation called');
             
@@ -1129,6 +1142,9 @@
             document.getElementById('estimatedCost').textContent = '計算中...';
             document.getElementById('estimatedTime').textContent = '計算中...';
             document.getElementById('recommendedMode').textContent = '分析中...';
+            document.getElementById('apiCalls').textContent = '-';
+            document.getElementById('totalChunks').textContent = '-';
+            document.getElementById('tokensPerChunk').textContent = '-';
             
             if (!currentFile) {
                 console.log('[DEBUG] No current file');
@@ -1167,6 +1183,7 @@
                 if (data.status === 'success' && data.data) {
                     const costData = data.data;
                     const estimate = costData.cost_estimates[0];
+                    const plan = costData.analysis_plan;
                     
                     // 檢查數據完整性
                     if (!estimate) {
@@ -1204,6 +1221,16 @@
                     document.getElementById('recommendedMode').textContent = 
                         modeMap[recommendedMode] || recommendedMode;
                     
+                    // 顯示 API 調用次數和分塊資訊
+                    if (plan) {
+                        document.getElementById('apiCalls').textContent = 
+                            `${plan.estimated_api_calls || estimate.api_queries_needed || 1} 次`;
+                        document.getElementById('totalChunks').textContent = 
+                            `${plan.total_chunks || 1} 塊`;
+                        document.getElementById('tokensPerChunk').textContent = 
+                            (plan.tokens_per_chunk || 0).toLocaleString();
+                    }
+                    
                     // 確保區塊持續顯示
                     costSection.classList.add('active');
                     console.log('[DEBUG] Cost estimation updated successfully');
@@ -1219,12 +1246,56 @@
                 document.getElementById('estimatedCost').textContent = '$0.00';
                 document.getElementById('estimatedTime').textContent = '無法估算';
                 document.getElementById('recommendedMode').textContent = mode || '-';
+                document.getElementById('apiCalls').textContent = '-';
+                document.getElementById('totalChunks').textContent = '-';
+                document.getElementById('tokensPerChunk').textContent = '-';
                 
                 // 顯示錯誤訊息
                 showMessage(`成本估算失敗: ${error.message}`, 'error');
                 
                 // 仍然保持區塊顯示
                 costSection.classList.add('active');
+            }
+        }
+
+        function updateCostDetails(costData) {
+            const costGrid = document.querySelector('.cost-grid');
+            const plan = costData.analysis_plan;
+            
+            // 檢查是否已有額外資訊元素
+            let chunksElement = document.getElementById('estimatedChunks');
+            if (!chunksElement) {
+                // 創建區塊數顯示
+                const chunksDiv = document.createElement('div');
+                chunksDiv.className = 'cost-item';
+                chunksDiv.innerHTML = `
+                    <div class="label">處理區塊</div>
+                    <div class="value" id="estimatedChunks">${plan.total_chunks} 塊</div>
+                `;
+                costGrid.appendChild(chunksDiv);
+                
+                // 創建 API 調用次數顯示
+                const apiDiv = document.createElement('div');
+                apiDiv.className = 'cost-item';
+                apiDiv.innerHTML = `
+                    <div class="label">API 調用</div>
+                    <div class="value" id="estimatedAPICalls">${plan.estimated_api_calls} 次</div>
+                `;
+                costGrid.appendChild(apiDiv);
+                
+                // 創建每區塊 Token 顯示
+                const tokenDiv = document.createElement('div');
+                tokenDiv.className = 'cost-item';
+                tokenDiv.innerHTML = `
+                    <div class="label">每塊 Tokens</div>
+                    <div class="value" id="tokensPerChunk">${plan.tokens_per_chunk.toLocaleString()}</div>
+                `;
+                costGrid.appendChild(tokenDiv);
+            } else {
+                // 更新現有元素
+                document.getElementById('estimatedChunks').textContent = `${plan.total_chunks} 塊`;
+                document.getElementById('estimatedAPICalls').textContent = `${plan.estimated_api_calls} 次`;
+                document.getElementById('tokensPerChunk').textContent = plan.tokens_per_chunk.toLocaleString();
             }
         }
 

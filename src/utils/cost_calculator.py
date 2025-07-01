@@ -40,7 +40,7 @@ class CostEstimate:
     analysis_time_estimate: float  # 分鐘
     is_within_budget: bool
     warnings: List[str]
-    api_calls: int = 1  # 新增這個欄位，預設值為 1    
+    api_calls: int = 1  # API 調用次數    
 
 class CostCalculator:
     """成本計算器"""
@@ -56,15 +56,15 @@ class CostCalculator:
         self._init_model_info()
     
     def _init_model_info(self):
-        """初始化模型資訊"""
-        # Anthropic 模型
+        """初始化模型資訊 - 修正價格單位"""
+        # Anthropic 模型 (價格從每 million tokens 轉換為每 1k tokens)
         self._model_info_cache.update({
             "claude-3-5-haiku-20241022": ModelCostInfo(
                 provider="anthropic",
                 model="claude-3-5-haiku-20241022",
                 tier=2,
-                input_cost_per_1k=1.0,
-                output_cost_per_1k=5.0,
+                input_cost_per_1k=0.00025,  # $0.25 per million = $0.00025 per 1k
+                output_cost_per_1k=0.00125, # $1.25 per million = $0.00125 per 1k
                 context_window=200000,
                 speed_rating=5,
                 quality_rating=3
@@ -73,8 +73,8 @@ class CostCalculator:
                 provider="anthropic",
                 model="claude-3-5-sonnet-20241022",
                 tier=3,
-                input_cost_per_1k=3.0,
-                output_cost_per_1k=15.0,
+                input_cost_per_1k=0.003,   # $3 per million = $0.003 per 1k
+                output_cost_per_1k=0.015,  # $15 per million = $0.015 per 1k
                 context_window=200000,
                 speed_rating=4,
                 quality_rating=4
@@ -83,8 +83,8 @@ class CostCalculator:
                 provider="anthropic",
                 model="claude-sonnet-4-20250514",
                 tier=3,
-                input_cost_per_1k=5.0,
-                output_cost_per_1k=25.0,
+                input_cost_per_1k=0.005,   # $5 per million = $0.005 per 1k
+                output_cost_per_1k=0.025,  # $25 per million = $0.025 per 1k
                 context_window=200000,
                 speed_rating=4,
                 quality_rating=5
@@ -93,22 +93,22 @@ class CostCalculator:
                 provider="anthropic",
                 model="claude-opus-4-20250514",
                 tier=4,
-                input_cost_per_1k=15.0,
-                output_cost_per_1k=75.0,
+                input_cost_per_1k=0.015,   # $15 per million = $0.015 per 1k
+                output_cost_per_1k=0.075,  # $75 per million = $0.075 per 1k
                 context_window=200000,
                 speed_rating=3,
                 quality_rating=5
             )
         })
         
-        # OpenAI 模型
+        # OpenAI 模型 (價格從每 million tokens 轉換為每 1k tokens)
         self._model_info_cache.update({
             "gpt-4o-mini": ModelCostInfo(
                 provider="openai",
                 model="gpt-4o-mini",
                 tier=2,
-                input_cost_per_1k=0.15,
-                output_cost_per_1k=0.60,
+                input_cost_per_1k=0.00015,  # $0.15 per million = $0.00015 per 1k
+                output_cost_per_1k=0.0006,  # $0.60 per million = $0.0006 per 1k
                 context_window=128000,
                 speed_rating=5,
                 quality_rating=3
@@ -117,8 +117,8 @@ class CostCalculator:
                 provider="openai",
                 model="gpt-4o",
                 tier=3,
-                input_cost_per_1k=2.50,
-                output_cost_per_1k=10.0,
+                input_cost_per_1k=0.0025,   # $2.50 per million = $0.0025 per 1k
+                output_cost_per_1k=0.01,    # $10 per million = $0.01 per 1k
                 context_window=128000,
                 speed_rating=4,
                 quality_rating=4
@@ -127,11 +127,21 @@ class CostCalculator:
                 provider="openai",
                 model="gpt-4-turbo",
                 tier=4,
-                input_cost_per_1k=10.0,
-                output_cost_per_1k=30.0,
+                input_cost_per_1k=0.01,     # $10 per million = $0.01 per 1k
+                output_cost_per_1k=0.03,    # $30 per million = $0.03 per 1k
                 context_window=128000,
                 speed_rating=3,
                 quality_rating=5
+            ),
+            "gpt-3.5-turbo": ModelCostInfo(
+                provider="openai",
+                model="gpt-3.5-turbo",
+                tier=1,
+                input_cost_per_1k=0.0005,   # $0.50 per million = $0.0005 per 1k
+                output_cost_per_1k=0.0015,  # $1.50 per million = $0.0015 per 1k
+                context_window=16385,
+                speed_rating=5,
+                quality_rating=2
             )
         })
     
@@ -149,20 +159,19 @@ class CostCalculator:
         if provider == ModelProvider.ANTHROPIC:
             # Claude 的 token 估算
             # 英文：約 4 字符/token，中文：約 2 字符/token
-            # 假設混合內容，平均 3 字符/token
-            input_tokens = int(chars / 3)
+            # 假設混合內容，平均 2.5 字符/token
+            input_tokens = int(chars / 2.5)
         else:
             # OpenAI 的 token 估算
             # 使用 GPT 的標準：約 4 字符/token
             input_tokens = int(chars / 4)
         
         # 輸出 tokens 估算：根據分析模式調整
-        # 這裡需要更精確的估算
         output_ratio = {
-            'quick': 0.2,      # 快速模式：輸出較少
-            'intelligent': 0.4, # 智能模式：中等輸出
-            'large_file': 0.5,  # 大檔模式：較多輸出
-            'max_token': 0.8    # 深度模式：最多輸出
+            AnalysisMode.QUICK: 0.2,      # 快速模式：輸出較少
+            AnalysisMode.INTELLIGENT: 0.4, # 智能模式：中等輸出
+            AnalysisMode.LARGE_FILE: 0.5,  # 大檔模式：較多輸出
+            AnalysisMode.MAX_TOKEN: 0.8    # 深度模式：最多輸出
         }
         
         # 預設使用 intelligent 模式的比例
@@ -170,8 +179,26 @@ class CostCalculator:
         
         return input_tokens, output_tokens
     
+    def calculate_api_calls_for_mode(self, total_tokens: int, context_window: int, mode: AnalysisMode) -> int:
+        """根據模式計算需要的 API 調用次數"""
+        # 根據模式調整有效 context window
+        mode_context_ratio = {
+            AnalysisMode.QUICK: 0.9,       # 快速模式：使用更多 context
+            AnalysisMode.INTELLIGENT: 0.7,  # 智能模式：標準比例
+            AnalysisMode.LARGE_FILE: 0.6,   # 大檔模式：保留更多空間
+            AnalysisMode.MAX_TOKEN: 0.5     # 深度模式：最保守
+        }
+        
+        ratio = mode_context_ratio.get(mode, 0.7)
+        effective_context = int(context_window * ratio)
+        
+        # 計算需要的 API 調用次數
+        api_calls = max(1, (total_tokens + effective_context - 1) // effective_context)
+        
+        return api_calls
+    
     def calculate_cost(self, file_size_kb: float, model: str, 
-                  budget: float = 10.0) -> CostEstimate:
+                      budget: float = 10.0, mode: AnalysisMode = AnalysisMode.INTELLIGENT) -> CostEstimate:
         """計算單一模型的成本"""
         if model not in self._model_info_cache:
             raise ValueError(f"Unknown model: {model}")
@@ -182,20 +209,28 @@ class CostCalculator:
         # 估算 tokens
         input_tokens, output_tokens = self.estimate_tokens(file_size_kb, provider)
         
-        # 計算成本 - 確保價格是每 1000 tokens 的單位
+        # 根據模式調整輸出 tokens
+        output_ratio = {
+            AnalysisMode.QUICK: 0.2,
+            AnalysisMode.INTELLIGENT: 0.4,
+            AnalysisMode.LARGE_FILE: 0.5,
+            AnalysisMode.MAX_TOKEN: 0.8
+        }
+        output_tokens = int(input_tokens * output_ratio.get(mode, 0.4))
+        
+        # 計算成本
         input_cost = (input_tokens / 1000.0) * model_info.input_cost_per_1k
         output_cost = (output_tokens / 1000.0) * model_info.output_cost_per_1k
         total_cost = input_cost + output_cost
         
-        # 估算處理時間（基於模型速度評級和檔案大小）
+        # 計算 API 調用次數
+        api_calls = self.calculate_api_calls_for_mode(input_tokens, model_info.context_window, mode)
+        
+        # 估算處理時間（基於模型速度評級、檔案大小和 API 調用次數）
         base_time = file_size_kb / 100  # 基礎時間：每 100KB 1 分鐘
         speed_factor = 6 - model_info.speed_rating  # 速度因子
-        analysis_time = base_time * speed_factor
-        
-        # 計算需要的 API 調用次數（分塊）
-        tokens_per_chunk = int(model_info.context_window * 0.7)  # 保留 30% 作為 buffer
-        total_tokens = input_tokens
-        api_calls = max(1, (total_tokens + tokens_per_chunk - 1) // tokens_per_chunk)
+        api_call_overhead = (api_calls - 1) * 0.5  # 每個額外 API 調用增加 0.5 分鐘
+        analysis_time = (base_time * speed_factor) + api_call_overhead
         
         # 檢查預算和生成警告
         warnings = []
@@ -222,7 +257,7 @@ class CostCalculator:
             analysis_time_estimate=analysis_time,
             is_within_budget=is_within_budget,
             warnings=warnings,
-            api_calls=api_calls  # 新增 API 調用次數
+            api_calls=api_calls
         )
     
     def compare_models_cost(self, file_size_kb: float, mode: AnalysisMode, 
@@ -258,21 +293,23 @@ class CostCalculator:
         for model in relevant_models:
             if model in self._model_info_cache:
                 try:
-                    estimate = self.calculate_cost(file_size_kb, model, budget)
+                    estimate = self.calculate_cost(file_size_kb, model, budget, mode)
                     model_info = self._model_info_cache[model]
                     
                     comparisons.append({
                         "provider": estimate.provider,
                         "model": model,
                         "tier": model_info.tier,
-                        "total_cost": round(estimate.total_cost, 2),
-                        "input_cost": round(estimate.input_cost, 2),
-                        "output_cost": round(estimate.output_cost, 2),
+                        "total_cost": round(estimate.total_cost, 4),
+                        "input_cost": round(estimate.input_cost, 4),
+                        "output_cost": round(estimate.output_cost, 4),
                         "analysis_time_estimate": round(estimate.analysis_time_estimate, 1),
                         "is_within_budget": estimate.is_within_budget,
                         "quality_rating": model_info.quality_rating,
                         "speed_rating": model_info.speed_rating,
-                        "warnings": estimate.warnings
+                        "warnings": estimate.warnings,
+                        "api_calls": estimate.api_calls,
+                        "tokens_per_api_call": int(model_info.context_window * 0.7)
                     })
                 except Exception:
                     continue
@@ -317,10 +354,11 @@ class CostCalculator:
             f"模型: {estimate.model} ({estimate.provider})",
             f"檔案大小: {estimate.file_size_kb:.1f} KB",
             f"預估 Tokens: 輸入 {estimate.estimated_input_tokens:,} / 輸出 {estimate.estimated_output_tokens:,}",
+            f"API 調用次數: {estimate.api_calls}",
             f"成本明細:",
-            f"  - 輸入成本: ${estimate.input_cost:.3f}",
-            f"  - 輸出成本: ${estimate.output_cost:.3f}",
-            f"  - 總成本: ${estimate.total_cost:.2f}",
+            f"  - 輸入成本: ${estimate.input_cost:.4f}",
+            f"  - 輸出成本: ${estimate.output_cost:.4f}",
+            f"  - 總成本: ${estimate.total_cost:.4f}",
             f"預估時間: {estimate.analysis_time_estimate:.1f} 分鐘",
             f"預算狀態: {'✓ 在預算內' if estimate.is_within_budget else '✗ 超出預算'}"
         ]

@@ -10,14 +10,14 @@ class OpenApiConfig(BaseApiConfig):
     base_url: str = "https://api.openai.com/v1"
     organization: str = None
     
-    # OpenAI 模型配置
+    # OpenAI 模型配置 - 修正價格單位（每 1k tokens）
     models: Dict[str, ModelConfig] = {
         # GPT-4o 系列
         "gpt-4o-mini": ModelConfig(
             name="gpt-4o-mini",
             max_tokens=16384,
-            input_cost_per_1k=0.15,
-            output_cost_per_1k=0.60,
+            input_cost_per_1k=0.00015,   # $0.15 per million = $0.00015 per 1k
+            output_cost_per_1k=0.0006,   # $0.60 per million = $0.0006 per 1k
             context_window=128000,
             supports_streaming=True,
             supports_function_calling=True
@@ -25,8 +25,8 @@ class OpenApiConfig(BaseApiConfig):
         "gpt-4o": ModelConfig(
             name="gpt-4o",
             max_tokens=16384,
-            input_cost_per_1k=2.50,
-            output_cost_per_1k=10.0,
+            input_cost_per_1k=0.0025,    # $2.50 per million = $0.0025 per 1k
+            output_cost_per_1k=0.01,     # $10 per million = $0.01 per 1k
             context_window=128000,
             supports_streaming=True,
             supports_function_calling=True
@@ -36,8 +36,8 @@ class OpenApiConfig(BaseApiConfig):
         "gpt-4-turbo": ModelConfig(
             name="gpt-4-turbo",
             max_tokens=4096,
-            input_cost_per_1k=10.0,
-            output_cost_per_1k=30.0,
+            input_cost_per_1k=0.01,      # $10 per million = $0.01 per 1k
+            output_cost_per_1k=0.03,     # $30 per million = $0.03 per 1k
             context_window=128000,
             supports_streaming=True,
             supports_function_calling=True
@@ -47,8 +47,8 @@ class OpenApiConfig(BaseApiConfig):
         "gpt-3.5-turbo": ModelConfig(
             name="gpt-3.5-turbo",
             max_tokens=4096,
-            input_cost_per_1k=0.50,
-            output_cost_per_1k=1.50,
+            input_cost_per_1k=0.0005,    # $0.50 per million = $0.0005 per 1k
+            output_cost_per_1k=0.0015,   # $1.50 per million = $0.0015 per 1k
             context_window=16385,
             supports_streaming=True,
             supports_function_calling=True
@@ -127,6 +127,29 @@ class OpenApiConfig(BaseApiConfig):
         
         # 添加 10% 的緩衝
         return int(estimated_tokens * 1.1)
+    
+    def calculate_api_calls(self, file_size_kb: float, mode: AnalysisMode) -> int:
+        """計算需要的 API 調用次數"""
+        # 估算總 tokens
+        chars = file_size_kb * 1024
+        total_tokens = int(chars / 4)  # OpenAI 平均 4 字符/token
+        
+        model = self.get_model_for_mode(mode)
+        model_config = self.get_model_config(model)
+        
+        # 根據模式調整有效 context window
+        mode_context_ratio = {
+            AnalysisMode.QUICK: 0.9,
+            AnalysisMode.INTELLIGENT: 0.7,
+            AnalysisMode.LARGE_FILE: 0.6,
+            AnalysisMode.MAX_TOKEN: 0.5
+        }
+        
+        ratio = mode_context_ratio.get(mode, 0.7)
+        effective_context = int(model_config.context_window * ratio)
+        
+        # 計算 API 調用次數
+        return max(1, (total_tokens + effective_context - 1) // effective_context)
     
     def chunk_text(self, text: str, mode: AnalysisMode) -> list[str]:
         """根據模式切分文本"""
