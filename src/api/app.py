@@ -654,8 +654,8 @@ def estimate_cost():
                     }
                 },
                 "recommended_mode": "quick" if file_size_kb < 100 else 
-                                   "intelligent" if file_size_kb < 1000 else 
-                                   "large_file"
+                                "intelligent" if file_size_kb < 2048 else  # 改為 2MB
+                                "large_file"
             }
         }
         

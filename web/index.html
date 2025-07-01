@@ -800,12 +800,20 @@
                             <div class="value" id="estimatedTime">0 分鐘</div>
                         </div>
                         <div class="cost-item">
-                            <div class="label">推薦模式</div>
-                            <div class="value" id="recommendedMode">-</div>
+                            <div class="label">日誌類型</div>
+                            <div class="value" id="selectedLogType">-</div>
+                        </div>                        
+                        <div class="cost-item">
+                            <div class="label">分析模式</div>
+                            <div class="value" id="selectedMode">-</div>
                         </div>
                         <div class="cost-item">
-                            <div class="label">API 調用</div>
-                            <div class="value" id="apiCalls">-</div>
+                            <div class="label">AI 提供者</div>
+                            <div class="value" id="selectedProvider">-</div>
+                        </div>                        
+                        <div class="cost-item">
+                            <div class="label">推薦模式</div>
+                            <div class="value" id="recommendedMode">-</div>
                         </div>
                         <div class="cost-item">
                             <div class="label">處理區塊</div>
@@ -1142,7 +1150,6 @@
             document.getElementById('estimatedCost').textContent = '計算中...';
             document.getElementById('estimatedTime').textContent = '計算中...';
             document.getElementById('recommendedMode').textContent = '分析中...';
-            document.getElementById('apiCalls').textContent = '-';
             document.getElementById('totalChunks').textContent = '-';
             document.getElementById('tokensPerChunk').textContent = '-';
             
@@ -1220,11 +1227,25 @@
                     const recommendedMode = costData.recommended_mode || mode;
                     document.getElementById('recommendedMode').textContent = 
                         modeMap[recommendedMode] || recommendedMode;
-                    
+
+                    // 顯示用戶選擇的選項
+                    const currentMode = document.querySelector('input[name="analysisMode"]:checked').value;
+                    const currentProvider = document.querySelector('input[name="provider"]:checked').value;
+
+                    document.getElementById('selectedMode').textContent = modeMap[currentMode] || currentMode;
+                    document.getElementById('selectedProvider').textContent = 
+                        currentProvider === 'anthropic' ? 'Anthropic Claude' : 'OpenAI GPT';
+
+                    const currentLogType = document.querySelector('input[name="logType"]:checked').value;
+                    const logTypeMap = {
+                        'anr': 'ANR',
+                        'tombstone': 'Tombstone'
+                    };
+
+                    document.getElementById('selectedLogType').textContent = logTypeMap[currentLogType] || currentLogType;
+                                            
                     // 顯示 API 調用次數和分塊資訊
                     if (plan) {
-                        document.getElementById('apiCalls').textContent = 
-                            `${plan.estimated_api_calls || estimate.api_queries_needed || 1} 次`;
                         document.getElementById('totalChunks').textContent = 
                             `${plan.total_chunks || 1} 塊`;
                         document.getElementById('tokensPerChunk').textContent = 
@@ -1246,7 +1267,6 @@
                 document.getElementById('estimatedCost').textContent = '$0.00';
                 document.getElementById('estimatedTime').textContent = '無法估算';
                 document.getElementById('recommendedMode').textContent = mode || '-';
-                document.getElementById('apiCalls').textContent = '-';
                 document.getElementById('totalChunks').textContent = '-';
                 document.getElementById('tokensPerChunk').textContent = '-';
                 
