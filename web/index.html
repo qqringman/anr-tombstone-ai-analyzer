@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
@@ -630,7 +630,7 @@
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <h1>🤖 ANR/Tombstone AI 分析系統</h1>
+            <h1>�� ANR/Tombstone AI 分析系統</h1>
             <p>使用先進的 AI 技術分析 Android 應用程式的 ANR 和 Tombstone 日誌</p>
         </div>
 
@@ -751,7 +751,7 @@
 
                 <!-- Cost Estimation -->
                 <div class="cost-section" id="costSection">
-                    <h4 style="margin-bottom: 8px;">💰 成本估算</h4>
+                    <h4 style="margin-bottom: 8px;">�� 成本估算</h4>
                     <div class="cost-grid">
                         <div class="cost-item">
                             <div class="label">預估成本</div>
@@ -833,11 +833,16 @@
 
             <div class="results-tabs">
                 <button class="tab active" data-tab="analysis">分析報告</button>
+                <button class="tab" data-tab="raw">原始輸出</button>
                 <button class="tab" data-tab="stats">統計資訊</button>
             </div>
 
             <div class="tab-content active" id="analysisTab">
                 <div class="results-content" id="analysisContent"></div>
+            </div>
+
+            <div class="tab-content" id="rawTab">
+                <div class="results-content" id="rawContent"></div>
             </div>
 
             <div class="tab-content" id="statsTab">
@@ -1180,6 +1185,7 @@
                         console.log('[DEBUG] Content to append:', data.content);
                         if (data.content) {
                             analysisResults.content += data.content;
+                            analysisResults.raw += data.content;
                             console.log('[DEBUG] Total content length now:', analysisResults.content.length);
                             
                             // 立即更新顯示
@@ -1268,7 +1274,7 @@
                     `${progress.current_chunk}/${progress.total_chunks}`;
             }
             
-            // 更新 Token 統計 - 修正這部分
+            // 更新 Token 統計
             if (progress.input_tokens !== undefined) {
                 document.getElementById('inputTokens').textContent = 
                     progress.input_tokens.toLocaleString();
@@ -1316,16 +1322,13 @@
 
         // Generate Statistics
         function generateStatistics() {
-            // Get token values - 修正這部分
-            const inputTokensText = document.getElementById('inputTokens').textContent;
-            const outputTokensText = document.getElementById('outputTokens').textContent;
-            
-            const inputTokens = parseInt(inputTokensText.replace(/,/g, '')) || 0;
-            const outputTokens = parseInt(outputTokensText.replace(/,/g, '')) || 0;
+            // Get token values
+            const inputTokens = parseInt(document.getElementById('inputTokens').textContent.replace(/,/g, '')) || 0;
+            const outputTokens = parseInt(document.getElementById('outputTokens').textContent.replace(/,/g, '')) || 0;
             
             // Token usage chart
             const tokenCanvas = document.getElementById('tokenChart');
-            if (tokenCanvas && (inputTokens > 0 || outputTokens > 0)) {
+            if (tokenCanvas) {
                 // 銷毀已存在的圖表
                 const existingChart = Chart.getChart(tokenCanvas);
                 if (existingChart) {
@@ -1348,24 +1351,13 @@
                         plugins: {
                             legend: {
                                 position: 'bottom'
-                            },
-                            tooltip: {
-                                callbacks: {
-                                    label: function(context) {
-                                        const label = context.label || '';
-                                        const value = context.parsed;
-                                        const total = inputTokens + outputTokens;
-                                        const percentage = ((value / total) * 100).toFixed(1);
-                                        return `${label}: ${value.toLocaleString()} (${percentage}%)`;
-                                    }
-                                }
                             }
                         }
                     }
                 });
             }
             
-            // 同時顯示實際成本（如果有的話）
+            // Cost chart (如果需要)
             const costCanvas = document.getElementById('costChart');
             if (costCanvas) {
                 // 銷毀已存在的圖表
@@ -1373,10 +1365,6 @@
                 if (existingChart) {
                     existingChart.destroy();
                 }
-                
-                // 從預估成本獲取
-                const estimatedCostText = document.getElementById('estimatedCost').textContent;
-                const estimatedCost = parseFloat(estimatedCostText.replace('$', '')) || 0;
                 
                 // 簡單的成本圖表
                 const costCtx = costCanvas.getContext('2d');
@@ -1386,7 +1374,7 @@
                         labels: ['預估成本', '實際成本'],
                         datasets: [{
                             label: '成本 (USD)',
-                            data: [estimatedCost, estimatedCost * 0.8], // 假設實際成本是預估的 80%
+                            data: [0.5, 0.3], // 示例數據
                             backgroundColor: ['#f59e0b', '#10b981']
                         }]
                     },
@@ -1500,6 +1488,7 @@
 
         function clearResults() {
             document.getElementById('analysisContent').innerHTML = '';
+            document.getElementById('rawContent').textContent = '';
             document.getElementById('statusMessages').innerHTML = '';
             document.getElementById('progressBar').style.width = '0%';
             document.getElementById('progressPercent').textContent = '0%';
@@ -1509,7 +1498,7 @@
         }
 
         function downloadResults() {
-            const content = analysisResults.content;
+            const content = analysisResults.raw;
             const blob = new Blob([content], { type: 'text/plain' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1520,7 +1509,7 @@
         }
 
         function copyResults() {
-            navigator.clipboard.writeText(analysisResults.content).then(() => {
+            navigator.clipboard.writeText(analysisResults.raw).then(() => {
                 showMessage('已複製到剪貼簿', 'success');
             });
         }
