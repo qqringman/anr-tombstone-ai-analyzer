@@ -281,7 +281,24 @@ const ApiClient = {
         }
         
         return { error: error.message || '未知錯誤' };
-    }
+    },
+
+    // 獲取速率限制資訊
+    async getRateLimits(provider, tier = null, model = null) {
+        const params = new URLSearchParams();
+        if (tier) params.append('tier', tier);
+        if (model) params.append('model', model);
+        
+        return this.request(`/ai/rate-limits/${provider}?${params}`);
+    },
+    
+    // 建議最佳層級
+    async suggestTier(params) {
+        return this.request('/ai/suggest-tier', {
+            method: 'POST',
+            body: JSON.stringify(params)
+        });
+    }    
 };
 
 // Utility function to generate analysis ID

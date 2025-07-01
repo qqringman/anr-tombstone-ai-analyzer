@@ -144,3 +144,9 @@ class AnthropicApiConfig(BaseApiConfig):
             chunks.append(text[i:i + chunk_size])
         
         return chunks
+
+    def get_model_context_window(self, model: str) -> int:
+        """獲取模型的 context window"""
+        if model in self.models:
+            return self.models[model].context_window
+        return 200000  # 預設值

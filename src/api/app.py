@@ -29,6 +29,8 @@ import asyncio
 from asgiref.sync import async_to_sync
 import threading
 
+from src.config.rate_limits import get_rate_limits_manager, RateLimitTier
+
 # 創建 Flask 應用
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -457,39 +459,212 @@ async def cancel_analysis(analysis_id):
 @app.route('/api/ai/estimate-analysis-cost', methods=['POST'])
 def estimate_cost():
     """估算分析成本"""
-    data = request.get_json()
-    file_size_kb = data.get('file_size_kb', 0)
-    mode = data.get('mode', 'intelligent')
+    try:
+        data = request.get_json()
+        file_size_kb = data.get('file_size_kb', 0)
+        mode = data.get('mode', 'intelligent')
+        provider = data.get('provider', 'anthropic')
+        
+        # 使用 CostCalculator
+        from src.utils.cost_calculator import CostCalculator
+        from src.config.base import AnalysisMode, ModelProvider
+        
+        calculator = CostCalculator()
+        
+        # 轉換參數
+        try:
+            analysis_mode = AnalysisMode(mode)
+            model_provider = ModelProvider(provider)
+        except ValueError:
+            analysis_mode = AnalysisMode.INTELLIGENT
+            model_provider = ModelProvider.ANTHROPIC
+        
+        # 獲取模型
+        if model_provider == ModelProvider.ANTHROPIC:
+            from src.config.anthropic_config import AnthropicApiConfig
+            config = AnthropicApiConfig()
+        else:
+            from src.config.openai_config import OpenApiConfig
+            config = OpenApiConfig()
+        
+        model = config.get_model_for_mode(analysis_mode)
+        
+        # 計算成本
+        estimate = calculator.calculate_cost(file_size_kb, model)
+        
+        # 計算 rate limit 影響
+        rate_limit_info = calculate_rate_limited_time(file_size_kb, model, provider)
+        
+        # 合併時間估算
+        # 取 rate limit 時間和模型處理時間的較大值
+        actual_time = max(
+            estimate.analysis_time_estimate,
+            rate_limit_info['rate_limit_info']['actual_time_minutes']
+        )
+        
+        return jsonify({
+            "status": "success",
+            "data": {
+                "file_info": {
+                    "size_kb": file_size_kb,
+                    "estimated_tokens": estimate.estimated_input_tokens
+                },
+                "cost_estimates": [{
+                    "provider": estimate.provider,
+                    "model": estimate.model,
+                    "total_cost": estimate.total_cost,
+                    "input_cost": estimate.input_cost,
+                    "output_cost": estimate.output_cost,
+                    "analysis_time_minutes": actual_time,
+                    "api_queries_needed": rate_limit_info['queries_needed'],
+                    "rate_limit_factor": rate_limit_info['rate_limit_info']['rate_limiting_factor'],
+                    "can_complete_today": rate_limit_info['can_complete_today'],
+                    "warnings": estimate.warnings
+                }],
+                "rate_limit_details": rate_limit_info['rate_limit_info'],
+                "recommended_mode": "quick" if file_size_kb < 100 else 
+                                   "intelligent" if file_size_kb < 1000 else 
+                                   "large_file"
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+def calculate_api_queries(file_size_kb, model, calculator):
+    """計算需要的 API 查詢次數"""
+    model_info = calculator._model_info_cache.get(model)
+    if not model_info:
+        return 1
     
-    # 簡單的成本計算邏輯
-    base_cost = {
-        'quick': 0.1,
-        'intelligent': 0.5,
-        'large_file': 1.0,
-        'max_token': 2.0
-    }
+    provider = ModelProvider(model_info.provider)
+    input_tokens, _ = calculator.estimate_tokens(file_size_kb, provider)
     
-    cost_per_mb = base_cost.get(mode, 0.5)
-    total_cost = (file_size_kb / 1024) * cost_per_mb
+    # 計算有效的 context window (預留 20% 給 prompt 和輸出)
+    effective_context = int(model_info.context_window * 0.8)
     
-    return jsonify({
-        "status": "success",
-        "data": {
-            "file_info": {
-                "size_kb": file_size_kb,
-                "estimated_tokens": int(file_size_kb * 400)  # 假設 1KB ≈ 400 tokens
-            },
-            "cost_estimates": [
-                {
-                    "provider": "anthropic",
-                    "model": "claude-sonnet-4",
-                    "total_cost": round(total_cost, 2),
-                    "analysis_time_minutes": round(file_size_kb / 200, 1)  # 假設 200KB/分鐘
-                }
-            ],
-            "recommended_mode": "quick" if file_size_kb < 1024 else "intelligent"
+    # 計算需要的查詢次數
+    queries = max(1, (input_tokens + effective_context - 1) // effective_context)
+    
+    return queries
+
+@app.route('/api/ai/rate-limits/<provider>', methods=['GET'])
+def get_rate_limits(provider):
+    """獲取指定提供者的速率限制資訊"""
+    try:
+        rate_limits_manager = get_rate_limits_manager()
+        
+        # 獲取參數
+        tier = request.args.get('tier')
+        model = request.args.get('model')
+        
+        if tier:
+            try:
+                tier = RateLimitTier(tier)
+            except ValueError:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Invalid tier: {tier}'
+                }), 400
+        
+        # 獲取 provider 實例
+        provider_instance = rate_limits_manager.get_provider(provider)
+        
+        # 獲取限制
+        limits = provider_instance.get_limits(tier, model)
+        
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'provider': provider,
+                'tier': tier.value if tier else rate_limits_manager.get_current_tier(provider),
+                'model': model,
+                'limits': {
+                    'requests_per_minute': limits.requests_per_minute,
+                    'tokens_per_minute': limits.tokens_per_minute,
+                    'requests_per_day': limits.requests_per_day,
+                    'tokens_per_day': limits.tokens_per_day,
+                    'concurrent_requests': limits.concurrent_requests
+                },
+                'formatted': provider_instance.format_info(tier, model),
+                'available_tiers': [t.value for t in provider_instance.get_available_tiers()]
+            }
+        })
+        
+    except ValueError as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 400
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/ai/suggest-tier', methods=['POST'])
+def suggest_tier():
+    """建議最適合的速率層級"""
+    try:
+        data = request.get_json()
+        file_size_kb = data.get('file_size_kb', 0)
+        provider = data.get('provider', 'anthropic')
+        desired_time = data.get('desired_time_minutes', 10)
+        
+        rate_limits_manager = get_rate_limits_manager()
+        
+        suggestion = rate_limits_manager.suggest_optimal_settings(
+            provider, file_size_kb, desired_time
+        )
+        
+        return jsonify({
+            'status': 'success',
+            'data': suggestion
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+        
+# 計算基於 rate limit 的時間估算
+def calculate_rate_limited_time(file_size_kb, model, provider):
+    """計算考慮 rate limits 的時間估算"""
+    calculator = CostCalculator()
+    rate_limits_manager = get_rate_limits_manager()
+    
+    # 估算 tokens
+    provider_enum = ModelProvider(provider)
+    input_tokens, output_tokens = calculator.estimate_tokens(file_size_kb, provider_enum)
+    total_tokens = input_tokens + output_tokens
+    
+    # 計算查詢次數
+    queries_needed = calculate_api_queries(file_size_kb, model, calculator)
+    
+    # 獲取時間估算
+    time_estimate = rate_limits_manager.calculate_time_estimate(
+        provider, total_tokens, queries_needed, model=model
+    )
+    
+    # 獲取當前限制
+    current_limits = rate_limits_manager.get_limits(provider, model=model)
+    
+    return {
+        'queries_needed': queries_needed,
+        'total_tokens': total_tokens,
+        'rate_limit_info': time_estimate,
+        'current_limits': {
+            'requests_per_minute': current_limits.requests_per_minute,
+            'tokens_per_minute': current_limits.tokens_per_minute,
+            'tier': rate_limits_manager.get_current_tier(provider)
         }
-    })
+    }
 
 # 檢查檔案大小
 @app.route('/api/ai/check-file-size', methods=['POST'])

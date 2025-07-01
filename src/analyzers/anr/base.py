@@ -9,7 +9,7 @@ from ...config.base import AnalysisMode, ModelProvider
 
 class BaseANRAnalyzer(BaseAnalyzer):
     """基礎 ANR 分析器"""
-    
+
     def validate_content(self, content: str) -> bool:
         """驗證是否為有效的 ANR 日誌"""
         # ANR 日誌特徵
@@ -168,7 +168,10 @@ class BaseANRAnalyzer(BaseAnalyzer):
         return '\n'.join(processed_lines)
     
     async def chunk_content(self, content: str, mode: AnalysisMode) -> List[str]:
-        """ANR 特定的分塊策略"""
+        """ANR 特定的分塊策略 - 按線程分塊"""
+        # 獲取基於模型的 chunk 大小
+        max_chunk_size = await self._calculate_chunk_size(mode)
+        
         # 嘗試按線程分塊
         thread_blocks = re.split(r'\n(?="[^"]*" prio=\d+ tid=\d+)', content)
         
@@ -177,32 +180,60 @@ class BaseANRAnalyzer(BaseAnalyzer):
             chunks = []
             header = thread_blocks[0]
             
-            # 根據模式決定每塊包含多少線程
-            threads_per_chunk = {
-                AnalysisMode.QUICK: 20,
-                AnalysisMode.INTELLIGENT: 50,
-                AnalysisMode.LARGE_FILE: 100,
-                AnalysisMode.MAX_TOKEN: 200
-            }.get(mode, 50)
+            # 根據 chunk 大小決定每塊包含多少線程
+            # 估算每個線程區塊的平均大小
+            avg_thread_size = sum(len(block) for block in thread_blocks[1:]) / max(len(thread_blocks) - 1, 1)
+            threads_per_chunk = max(1, int(max_chunk_size / avg_thread_size))
+            
+            # 根據模式調整線程數
+            mode_thread_limits = {
+                AnalysisMode.QUICK: min(threads_per_chunk, 20),
+                AnalysisMode.INTELLIGENT: min(threads_per_chunk, 50),
+                AnalysisMode.LARGE_FILE: min(threads_per_chunk, 100),
+                AnalysisMode.MAX_TOKEN: threads_per_chunk  # 使用計算出的最大值
+            }
+            
+            threads_per_chunk = mode_thread_limits.get(mode, 50)
             
             current_chunk = [header]
+            current_size = len(header)
             thread_count = 0
             
             for thread_block in thread_blocks[1:]:
-                current_chunk.append(thread_block)
-                thread_count += 1
+                block_size = len(thread_block)
                 
-                if thread_count >= threads_per_chunk:
+                # 檢查是否會超過大小限制
+                if current_size + block_size > max_chunk_size and current_chunk:
                     chunks.append('\n'.join(current_chunk))
                     current_chunk = [header]  # 每塊都包含頭部
+                    current_size = len(header)
+                    thread_count = 0
+                
+                current_chunk.append(thread_block)
+                current_size += block_size
+                thread_count += 1
+                
+                # 檢查線程數限制
+                if thread_count >= threads_per_chunk:
+                    chunks.append('\n'.join(current_chunk))
+                    current_chunk = [header]
+                    current_size = len(header)
                     thread_count = 0
             
-            if current_chunk:
+            if len(current_chunk) > 1:  # 不只有 header
                 chunks.append('\n'.join(current_chunk))
+            
+            self.logger.log_analysis(
+                "info",
+                f"ANR content chunked by threads",
+                total_threads=len(thread_blocks) - 1,
+                chunks=len(chunks),
+                threads_per_chunk=threads_per_chunk
+            )
             
             return chunks
         else:
-            # 使用基類的分塊方法
+            # 沒有線程結構，使用基類的分塊方法
             return await super().chunk_content(content, mode)
     
     def analyze_thread_state(self, thread_info: str) -> Dict[str, Any]:

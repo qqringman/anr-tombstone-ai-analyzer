@@ -1121,35 +1121,33 @@
                 
                 if (data.status === 'success' && data.data) {
                     const costData = data.data;
+                    const estimate = costData.cost_estimates[0];
                     
-                    // 找出所選提供者的成本估算
-                    const providerEstimates = costData.cost_estimates.filter(
-                        estimate => estimate.provider === provider
-                    );
+                    // 顯示成本
+                    document.getElementById('estimatedCost').textContent = 
+                        `$${estimate.total_cost.toFixed(4)}`;
                     
-                    if (providerEstimates.length > 0) {
-                        const estimate = providerEstimates[0];
-                        
-                        // 顯示預估成本
-                        document.getElementById('estimatedCost').textContent = 
-                            `$${estimate.total_cost.toFixed(4)}`;
-                            
-                        // 保存預估值供比較
-                        window.estimatedCost = estimate.total_cost;
-                    }
-
-                    // 使用模型特定的時間估算
-                    const timeEstimate = modelTimeEstimates[provider][mode];
-                    const fileSizeFactor = Math.max(1, fileSizeKB / 1024); // MB
-                    const estimatedMinutes = timeEstimate.min * fileSizeFactor;
-                    const maxMinutes = Math.min(timeEstimate.max * fileSizeFactor, 30); // Cap at 30 minutes
-                    
+                    // 顯示時間（考慮 rate limits）
                     document.getElementById('estimatedTime').textContent = 
-                        `${estimatedMinutes.toFixed(1)}-${maxMinutes.toFixed(1)} 分鐘`;
-
-                    // 更新推薦模式
-                    document.getElementById('recommendedMode').textContent = 
-                        costData.recommended_mode || '-';
+                        `${estimate.analysis_time_minutes.toFixed(1)} 分鐘`;
+                    
+                    // 顯示 API 查詢次數
+                    if (estimate.api_queries_needed) {
+                        // 在成本區域添加查詢次數顯示
+                        let queriesElement = document.getElementById('apiQueries');
+                        if (!queriesElement) {
+                            const costGrid = document.querySelector('.cost-grid');
+                            const div = document.createElement('div');
+                            div.className = 'cost-item';
+                            div.innerHTML = `
+                                <div class="label">API 查詢次數</div>
+                                <div class="value" id="apiQueries">${estimate.api_queries_needed}</div>
+                            `;
+                            costGrid.appendChild(div);
+                        } else {
+                            queriesElement.textContent = estimate.api_queries_needed;
+                        }
+                    }
                     
                     document.getElementById('costSection').classList.add('active');
                 }

@@ -9,7 +9,7 @@ from ...config.base import AnalysisMode, ModelProvider
 
 class BaseTombstoneAnalyzer(BaseAnalyzer):
     """基礎 Tombstone 分析器"""
-    
+
     def validate_content(self, content: str) -> bool:
         """驗證是否為有效的 Tombstone 日誌"""
         # Tombstone 日誌特徵
@@ -196,7 +196,10 @@ class BaseTombstoneAnalyzer(BaseAnalyzer):
         return content
     
     async def chunk_content(self, content: str, mode: AnalysisMode) -> List[str]:
-        """Tombstone 特定的分塊策略"""
+        """Tombstone 特定的分塊策略 - 按區段分塊"""
+        # 獲取基於模型的 chunk 大小
+        max_chunk_size = await self._calculate_chunk_size(mode)
+        
         # 嘗試按主要區段分塊
         sections = []
         current_section = []
@@ -209,7 +212,9 @@ class BaseTombstoneAnalyzer(BaseAnalyzer):
             "memory near",
             "code around",
             "registers:",
-            "memory map:"
+            "memory map:",
+            "open files:",
+            "logcat:"
         ]
         
         for line in lines:
@@ -225,41 +230,91 @@ class BaseTombstoneAnalyzer(BaseAnalyzer):
         if current_section:
             sections.append('\n'.join(current_section))
         
-        # 根據模式合併區段
+        # 根據模式和大小限制合併區段
         if mode == AnalysisMode.QUICK:
             # 快速模式：只保留最重要的部分
             important_sections = []
             for section in sections:
-                if any(marker in section.lower() for marker in ["*** *** ***", "backtrace:", "abort message"]):
+                if any(marker in section.lower() 
+                    for marker in ["*** *** ***", "backtrace:", "abort message"]):
                     important_sections.append(section)
-            return important_sections[:3]  # 最多 3 個區段
+            
+            # 合併成不超過大小限制的 chunks
+            return self._merge_sections_by_size(important_sections[:3], max_chunk_size)
         
         elif mode == AnalysisMode.MAX_TOKEN:
-            # 最大 token 模式：返回所有區段
-            return sections
+            # 最大 token 模式：盡可能保留所有內容
+            return self._merge_sections_by_size(sections, max_chunk_size)
         
         else:
-            # 其他模式：根據大小合併區段
-            chunk_size = 100000 if mode == AnalysisMode.INTELLIGENT else 150000
+            # 其他模式：智能合併區段
             chunks = []
             current_chunk = []
             current_size = 0
             
-            for section in sections:
+            # 優先保留的區段順序
+            priority_order = [
+                lambda s: "*** *** ***" in s,
+                lambda s: "backtrace:" in s.lower(),
+                lambda s: "abort message" in s.lower(),
+                lambda s: "registers:" in s.lower(),
+                lambda s: "stack:" in s.lower(),
+                lambda s: True  # 其他所有區段
+            ]
+            
+            # 按優先級排序區段
+            sorted_sections = []
+            for priority_check in priority_order:
+                for section in sections[:]:
+                    if priority_check(section):
+                        sorted_sections.append(section)
+                        sections.remove(section)
+            
+            # 合併區段
+            for section in sorted_sections:
                 section_size = len(section)
                 
-                if current_size + section_size > chunk_size and current_chunk:
+                if current_size + section_size > max_chunk_size and current_chunk:
                     chunks.append('\n\n'.join(current_chunk))
                     current_chunk = [section]
                     current_size = section_size
                 else:
                     current_chunk.append(section)
-                    current_size += section_size
+                    current_size += section_size + 2  # +2 for \n\n
             
             if current_chunk:
                 chunks.append('\n\n'.join(current_chunk))
             
+            self.logger.log_analysis(
+                "info",
+                f"Tombstone content chunked by sections",
+                total_sections=len(sorted_sections),
+                chunks=len(chunks)
+            )
+            
             return chunks
+
+    def _merge_sections_by_size(self, sections: List[str], max_size: int) -> List[str]:
+        """根據大小限制合併區段"""
+        chunks = []
+        current_chunk = []
+        current_size = 0
+        
+        for section in sections:
+            section_size = len(section)
+            
+            if current_size + section_size > max_size and current_chunk:
+                chunks.append('\n\n'.join(current_chunk))
+                current_chunk = [section]
+                current_size = section_size
+            else:
+                current_chunk.append(section)
+                current_size += section_size + 2
+        
+        if current_chunk:
+            chunks.append('\n\n'.join(current_chunk))
+        
+        return chunks if chunks else ['\n\n'.join(sections)]    
     
     def analyze_backtrace(self, content: str) -> List[Dict[str, Any]]:
         """分析 backtrace"""

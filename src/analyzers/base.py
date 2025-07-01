@@ -102,26 +102,9 @@ class BaseAnalyzer(ABC):
         return content
     
     async def chunk_content(self, content: str, mode: AnalysisMode) -> List[str]:
-        """
-        將內容分塊
-        
-        Args:
-            content: 要分塊的內容
-            mode: 分析模式
-            
-        Returns:
-            內容塊列表
-        """
-        # 子類可以覆寫此方法實現自定義分塊邏輯
-        # 預設實作：根據模式決定塊大小
-        chunk_sizes = {
-            AnalysisMode.QUICK: 50000,
-            AnalysisMode.INTELLIGENT: 150000,
-            AnalysisMode.LARGE_FILE: 200000,
-            AnalysisMode.MAX_TOKEN: 180000
-        }
-        
-        chunk_size = chunk_sizes.get(mode, 150000)
+        """將內容分塊 - 基類通用實作"""
+        # 獲取 context window 大小
+        chunk_size = await self._calculate_chunk_size(mode)
         
         if len(content) <= chunk_size:
             return [content]
@@ -148,6 +131,62 @@ class BaseAnalyzer(ABC):
         
         return chunks
     
+    async def _calculate_chunk_size(self, mode: AnalysisMode) -> int:
+        """計算基於模型 context window 的 chunk 大小"""
+        from ..config.rate_limits import get_rate_limits_manager
+        
+        # 獲取當前模型
+        if hasattr(self, 'config'):
+            model = self.config.get_model_for_mode(mode)
+            provider_name = self.provider.value
+            
+            # 獲取 rate limits manager
+            rate_manager = get_rate_limits_manager()
+            
+            try:
+                provider_instance = rate_manager.get_provider(provider_name)
+                
+                # 獲取模型的 context window
+                if hasattr(provider_instance, 'get_model_context_limits'):
+                    context_window = provider_instance.get_model_context_limits(model)
+                else:
+                    # 預設值
+                    context_window = 200000 if provider_name == 'anthropic' else 128000
+                    
+                # 計算有效的 token 數（預留 20% 給 prompt 和輸出）
+                effective_tokens = int(context_window * 0.8)
+                
+                # 根據 provider 估算字符到 token 的比例
+                if provider_name == 'anthropic':
+                    chars_per_token = 2.5
+                else:
+                    chars_per_token = 4.0
+                
+                # 計算最大字符數
+                max_chars = int(effective_tokens * chars_per_token)
+                
+            except Exception as e:
+                self.logger.warning(f"Failed to get model context limits: {e}")
+                # 使用預設值
+                max_chars = 150000
+        else:
+            # 沒有 config 時使用預設值
+            max_chars = 150000
+        
+        # 根據分析模式調整
+        mode_multipliers = {
+            AnalysisMode.QUICK: 0.3,
+            AnalysisMode.INTELLIGENT: 0.6,
+            AnalysisMode.LARGE_FILE: 0.8,
+            AnalysisMode.MAX_TOKEN: 0.9
+        }
+        
+        multiplier = mode_multipliers.get(mode, 0.6)
+        chunk_size = int(max_chars * multiplier)
+        
+        # 確保合理的最小值
+        return max(chunk_size, 10000)
+            
     async def post_process(self, result: str) -> str:
         """
         後處理結果
