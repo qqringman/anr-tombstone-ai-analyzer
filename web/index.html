@@ -677,10 +677,10 @@
                         <p style="color: var(--text-secondary); margin: 8px 0;">或</p>
                         <button class="btn btn-secondary">選擇檔案</button>
                         <p style="font-size: 12px; color: var(--text-secondary); margin-top: 16px;">
-                            支援 .txt, .log 檔案，最大 20MB
+                            支援任何文字格式檔案（ANR/Tombstone logs），最大 20MB
                         </p>
                     </div>
-                    <input type="file" id="fileInput" class="file-input" accept=".txt,.log">
+                    <input type="file" id="fileInput" class="file-input">
                 </div>
 
                 <div class="file-info" id="fileInfo">
@@ -777,7 +777,10 @@
 
                 <!-- Cost Estimation -->
                 <div class="cost-section" id="costSection">
-                    <h4 style="margin-bottom: 8px;">�� 成本估算</h4>
+                    <h4 style="margin-bottom: 8px;">💰 成本估算</h4>
+                    <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">
+                        * 預估成本基於檔案大小，實際成本依據 AI 回應長度計算
+                    </p>
                     <div class="cost-grid">
                         <div class="cost-item">
                             <div class="label">預估成本</div>
@@ -997,17 +1000,15 @@
 
         // File Handling
         function handleFile(file) {
-            // Validate file
-            if (!file.name.match(/\.(txt|log)$/i)) {
-                showMessage('請上傳 .txt 或 .log 檔案', 'error');
-                return;
-            }
-
+            // 修改驗證邏輯
             if (file.size > 20 * 1024 * 1024) {
                 showMessage('檔案大小不能超過 20MB', 'error');
                 return;
             }
-
+            
+            // 移除副檔名檢查
+            // 不再檢查 file.name.match(/\.(txt|log)$/i)
+            
             currentFile = file;
             
             // Update file info
@@ -1033,20 +1034,61 @@
             const reader = new FileReader();
             reader.onload = function(e) {
                 const content = e.target.result;
-                const isANR = content.includes('DALVIK THREADS') || content.includes('pid') && content.includes('tid');
-                const isTombstone = content.includes('*** *** ***') || content.includes('Build fingerprint');
                 
-                if (isANR) {
+                // ANR 特徵
+                const anrPatterns = [
+                    'DALVIK THREADS',
+                    '----- pid',
+                    'Cmd line:',
+                    '"main" prio=',
+                    'at android.',
+                    'ActivityManager',
+                    'ANR in'
+                ];
+                
+                // Tombstone 特徵
+                const tombstonePatterns = [
+                    '*** *** ***',
+                    'Build fingerprint:',
+                    'signal \\d+ \\(SIG',
+                    'backtrace:',
+                    'Tombstone written to:',
+                    'Native crash',
+                    'Fatal signal'
+                ];
+                
+                let anrScore = 0;
+                let tombstoneScore = 0;
+                
+                anrPatterns.forEach(pattern => {
+                    if (content.includes(pattern)) anrScore++;
+                });
+                
+                tombstonePatterns.forEach(pattern => {
+                    if (new RegExp(pattern, 'i').test(content)) tombstoneScore++;
+                });
+                
+                if (anrScore > tombstoneScore && anrScore >= 2) {
                     document.querySelector('input[value="anr"]').checked = true;
                     document.getElementById('fileType').textContent = 'ANR Log';
-                } else if (isTombstone) {
+                } else if (tombstoneScore > anrScore && tombstoneScore >= 2) {
                     document.querySelector('input[value="tombstone"]').checked = true;
                     document.getElementById('fileType').textContent = 'Tombstone Log';
                 } else {
-                    document.getElementById('fileType').textContent = '未知類型';
+                    // 基於檔名猜測
+                    const fileName = file.name.toLowerCase();
+                    if (fileName.includes('anr')) {
+                        document.querySelector('input[value="anr"]').checked = true;
+                        document.getElementById('fileType').textContent = 'ANR Log (推測)';
+                    } else if (fileName.includes('tombstone')) {
+                        document.querySelector('input[value="tombstone"]').checked = true;
+                        document.getElementById('fileType').textContent = 'Tombstone Log (推測)';
+                    } else {
+                        document.getElementById('fileType').textContent = '未知類型';
+                    }
                 }
             };
-            reader.readAsText(file.slice(0, 1024)); // Read first 1KB for detection
+            reader.readAsText(file.slice(0, 2048)); // Read first 2KB for detection
         }
 
         // Token Estimation
@@ -1087,8 +1129,13 @@
                     
                     if (providerEstimates.length > 0) {
                         const estimate = providerEstimates[0];
+                        
+                        // 顯示預估成本
                         document.getElementById('estimatedCost').textContent = 
-                            `$${estimate.total_cost.toFixed(2)}`;
+                            `$${estimate.total_cost.toFixed(4)}`;
+                            
+                        // 保存預估值供比較
+                        window.estimatedCost = estimate.total_cost;
                     }
 
                     // 使用模型特定的時間估算
@@ -1344,7 +1391,7 @@
             
             // 清除草稿
             localStorage.removeItem('draft_analysis');
-            
+
             document.getElementById('analyzeBtn').disabled = false;
             document.querySelector('#analyzeBtn .spinner').style.display = 'none';
             document.querySelector('#analyzeBtn span:last-child').textContent = '開始分析';
@@ -1400,17 +1447,27 @@
                 }
             }
             
-            // 即時更新圖表
-            //if (chartNeedsUpdate && chartData.inputTokens + chartData.outputTokens > 0) {
-            //    updateLiveCharts();
-            //}
-
             // 確保圖表更新 - 添加節流控制
             if (!window.chartUpdateThrottle) {
                 window.chartUpdateThrottle = setTimeout(() => {
                     updateLiveCharts();
                     window.chartUpdateThrottle = null;
                 }, 200); // 每200ms最多更新一次
+            }
+
+            // 更新預估成本
+            if (progress.total_cost !== undefined) {
+                const costElement = document.getElementById('currentCost');
+                if (costElement) {
+                    // 確保成本是合理的數值
+                    const cost = parseFloat(progress.total_cost);
+                    if (cost > 0 && cost < 1000) { // 合理性檢查
+                        costElement.textContent = `$${cost.toFixed(4)}`;
+                        chartData.totalCost = cost;
+                    } else {
+                        console.warn('Unreasonable cost value:', cost);
+                    }
+                }
             }            
         }
 
@@ -1680,6 +1737,22 @@
                         }
                     }
                 });
+
+                // 計算成本差異
+                if (window.estimatedCost && chartData.totalCost) {
+                    const difference = chartData.totalCost - window.estimatedCost;
+                    const percentDiff = (difference / window.estimatedCost * 100).toFixed(1);
+                    
+                    // 顯示成本對比
+                    const costComparison = `
+                        預估成本: $${window.estimatedCost.toFixed(4)}
+                        實際成本: $${chartData.totalCost.toFixed(4)}
+                        差異: ${percentDiff > 0 ? '+' : ''}${percentDiff}%
+                    `;
+                    
+                    console.log('Cost comparison:', costComparison);
+                    // 可以將這個資訊顯示在界面上
+                }
             }
             
             // Cost chart (如果需要)

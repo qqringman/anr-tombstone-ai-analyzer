@@ -5,6 +5,8 @@ from abc import ABC, abstractmethod
 from typing import Dict, Optional, Any, List
 from pydantic import BaseModel, Field
 from enum import Enum
+from ..utils.logger import get_logger
+logger = get_logger(__name__)
 
 class ModelProvider(Enum):
     """模型提供者"""
@@ -25,6 +27,8 @@ class ModelConfig(BaseModel):
     input_cost_per_1k: float
     output_cost_per_1k: float
     context_window: int
+    input_cost_per_1k: float  # 每 1000 個 input tokens 的成本
+    output_cost_per_1k: float  # 每 1000 個 output tokens 的成本    
     supports_streaming: bool = True
     supports_function_calling: bool = False
 
@@ -55,11 +59,37 @@ class BaseApiConfig(BaseModel, ABC):
         pass
     
     def calculate_cost(self, input_tokens: int, output_tokens: int, model_name: str) -> float:
-        """計算成本"""
-        config = self.get_model_config(model_name)
-        input_cost = (input_tokens / 1000) * config.input_cost_per_1k
-        output_cost = (output_tokens / 1000) * config.output_cost_per_1k
-        return input_cost + output_cost
+        """
+        計算 API 調用成本
+        
+        Args:
+            input_tokens: 輸入 token 數
+            output_tokens: 輸出 token 數  
+            model_name: 模型名稱
+            
+        Returns:
+            總成本（美元）
+        """
+        if model_name not in self.models:
+            raise ValueError(f"Unknown model: {model_name}")
+        
+        model_config = self.models[model_name]
+        
+        # 確保價格是每 1000 tokens
+        input_cost = (input_tokens / 1000.0) * model_config.input_cost_per_1k
+        output_cost = (output_tokens / 1000.0) * model_config.output_cost_per_1k
+        
+        total_cost = input_cost + output_cost
+        
+        # 添加調試日誌
+        logger.debug(
+            f"Cost calculation for {model_name}: "
+            f"input_tokens={input_tokens} ({input_tokens/1000:.2f}k) × ${model_config.input_cost_per_1k}/1k = ${input_cost:.4f}, "
+            f"output_tokens={output_tokens} ({output_tokens/1000:.2f}k) × ${model_config.output_cost_per_1k}/1k = ${output_cost:.4f}, "
+            f"total=${total_cost:.4f}"
+        )
+        
+        return total_cost
     
     def validate_token_limit(self, tokens: int, model_name: str) -> bool:
         """驗證 token 限制"""

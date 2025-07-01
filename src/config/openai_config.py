@@ -77,11 +77,20 @@ class OpenApiConfig(BaseApiConfig):
         """根據分析模式獲取模型名稱"""
         return self.mode_model_mapping.get(mode, self.default_model)
     
-    def get_model_config(self, model_name: str) -> ModelConfig:
-        """獲取模型配置"""
-        if model_name not in self.models:
-            raise ValueError(f"Unknown model: {model_name}")
-        return self.models[model_name]
+    def get_model_config(self, model: str) -> ModelConfig:
+        """
+        獲取模型配置
+        
+        Args:
+            model: 模型名稱
+            
+        Returns:
+            模型配置對象
+        """
+        if model not in self.models:
+            raise ValueError(f"Unknown model: {model}")
+        
+        return self.models[model]
     
     def get_headers(self) -> Dict[str, str]:
         """獲取請求標頭"""
@@ -94,9 +103,30 @@ class OpenApiConfig(BaseApiConfig):
         return headers
     
     def estimate_tokens(self, text: str) -> int:
-        """估算文本的 token 數量"""
-        # OpenAI 的 token 估算：大約每 4 個字符 1 個 token
-        return int(len(text) / 4)
+        """
+        估算文本的 token 數量
+        
+        Args:
+            text: 文本內容
+            
+        Returns:
+            估算的 token 數
+        """
+        if not text:
+            return 0
+        
+        # OpenAI 的 token 估算
+        # 使用 tiktoken 庫會更準確，但這裡使用簡單估算
+        
+        # 計算中英文字符
+        chinese_chars = len([c for c in text if '\u4e00' <= c <= '\u9fff'])
+        other_chars = len(text) - chinese_chars
+        
+        # 中文字符平均 2 個 tokens，英文平均 4 個字符一個 token
+        estimated_tokens = chinese_chars * 2 + other_chars / 4
+        
+        # 添加 10% 的緩衝
+        return int(estimated_tokens * 1.1)
     
     def chunk_text(self, text: str, mode: AnalysisMode) -> list[str]:
         """根據模式切分文本"""
@@ -135,9 +165,28 @@ class OpenApiConfig(BaseApiConfig):
         
         return chunks
     
-    def format_messages(self, system_prompt: str, user_prompt: str) -> list[dict]:
-        """格式化消息"""
-        return [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
+    def format_messages(self, system_prompt: str, user_prompt: str) -> list:
+        """
+        格式化消息列表
+        
+        Args:
+            system_prompt: 系統提示詞
+            user_prompt: 用戶提示詞
+            
+        Returns:
+            格式化的消息列表
+        """
+        messages = []
+        
+        if system_prompt:
+            messages.append({
+                "role": "system",
+                "content": system_prompt
+            })
+        
+        messages.append({
+            "role": "user",
+            "content": user_prompt
+        })
+        
+        return messages

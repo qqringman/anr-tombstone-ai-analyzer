@@ -244,6 +244,13 @@ def analyze_with_cancellation():
             # 估算輸入 tokens
             input_tokens = wrapper.config.estimate_tokens(content)
             
+            # 獲取模型配置用於成本計算
+            model = wrapper.config.get_model_for_mode(analysis_mode)
+            model_config = wrapper.config.get_model_config(model)
+            
+            # 計算輸入成本
+            input_cost = (input_tokens / 1000.0) * model_config.input_cost_per_1k
+            
             # 立即發送初始進度
             progress_data = {
                 'progress_percentage': 0,
@@ -251,7 +258,7 @@ def analyze_with_cancellation():
                 'total_chunks': 1,
                 'input_tokens': input_tokens,
                 'output_tokens': 0,
-                'total_cost': 0.0
+                'total_cost': input_cost  # 初始只有輸入成本
             }
             yield f"data: {json.dumps({'type': 'progress', 'progress': progress_data})}\n\n"
             
@@ -278,10 +285,13 @@ def analyze_with_cancellation():
                         current_output = ''.join(total_content)
                         output_tokens = wrapper.config.estimate_tokens(current_output)
                         
-                        # 計算進度和成本
-                        estimated_progress = min(chunk_count * 5, 90)
-                        model = wrapper.config.get_model_for_mode(analysis_mode)
-                        current_cost = wrapper.calculate_cost(input_tokens, output_tokens, model)
+                        # 計算成本（確保使用正確的單位）
+                        input_cost = (input_tokens / 1000.0) * model_config.input_cost_per_1k
+                        output_cost = (output_tokens / 1000.0) * model_config.output_cost_per_1k
+                        current_total_cost = input_cost + output_cost
+                        
+                        # 計算進度
+                        estimated_progress = min(chunk_count * 5, 90)  # 最多到 90%
                         
                         # 發送內容
                         yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
@@ -297,7 +307,7 @@ def analyze_with_cancellation():
                                 'total_chunks': max(chunk_count + 5, 10),
                                 'input_tokens': input_tokens,
                                 'output_tokens': output_tokens,
-                                'total_cost': current_cost
+                                'total_cost': current_total_cost
                             }
                             yield f"data: {json.dumps({'type': 'progress', 'progress': progress_data})}\n\n"
                             last_progress_time = current_time
@@ -317,9 +327,10 @@ def analyze_with_cancellation():
                 total_text = ''.join(total_content)
                 final_output_tokens = wrapper.config.estimate_tokens(total_text)
                 
-                # 計算成本
-                model = wrapper.config.get_model_for_mode(analysis_mode)
-                cost = wrapper.calculate_cost(input_tokens, final_output_tokens, model)
+                # 計算最終成本
+                final_input_cost = (input_tokens / 1000.0) * model_config.input_cost_per_1k
+                final_output_cost = (final_output_tokens / 1000.0) * model_config.output_cost_per_1k
+                final_total_cost = final_input_cost + final_output_cost
                 
                 # 發送最終進度
                 final_progress = {
@@ -328,7 +339,14 @@ def analyze_with_cancellation():
                     'total_chunks': chunk_count,
                     'input_tokens': input_tokens,
                     'output_tokens': final_output_tokens,
-                    'total_cost': cost
+                    'total_cost': final_total_cost,
+                    'cost_breakdown': {
+                        'input_cost': final_input_cost,
+                        'output_cost': final_output_cost,
+                        'model': model,
+                        'input_price_per_1k': model_config.input_cost_per_1k,
+                        'output_price_per_1k': model_config.output_cost_per_1k
+                    }
                 }
                 yield f"data: {json.dumps({'type': 'progress', 'progress': final_progress})}\n\n"
                 

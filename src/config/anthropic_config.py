@@ -69,11 +69,20 @@ class AnthropicApiConfig(BaseApiConfig):
         """根據分析模式獲取模型名稱"""
         return self.mode_model_mapping.get(mode, self.default_model)
     
-    def get_model_config(self, model_name: str) -> ModelConfig:
-        """獲取模型配置"""
-        if model_name not in self.models:
-            raise ValueError(f"Unknown model: {model_name}")
-        return self.models[model_name]
+    def get_model_config(self, model: str) -> ModelConfig:
+        """
+        獲取模型配置
+        
+        Args:
+            model: 模型名稱
+            
+        Returns:
+            模型配置對象
+        """
+        if model not in self.models:
+            raise ValueError(f"Unknown model: {model}")
+        
+        return self.models[model]
     
     def get_headers(self) -> Dict[str, str]:
         """獲取請求標頭"""
@@ -93,9 +102,31 @@ class AnthropicApiConfig(BaseApiConfig):
         return tier_mapping.get(tier, [])
     
     def estimate_tokens(self, text: str) -> int:
-        """估算文本的 token 數量"""
-        # Anthropic 的 token 估算：大約每個字符 0.4 個 token
-        return int(len(text) * 0.4)
+        """
+        估算文本的 token 數量
+        
+        Args:
+            text: 文本內容
+            
+        Returns:
+            估算的 token 數
+        """
+        if not text:
+            return 0
+        
+        # 使用更準確的估算方法
+        # 對於英文：平均每個 token 約 4 個字符
+        # 對於中文：平均每個字符約 2 個 tokens
+        
+        # 簡單估算：計算中英文字符
+        chinese_chars = len([c for c in text if '\u4e00' <= c <= '\u9fff'])
+        other_chars = len(text) - chinese_chars
+        
+        # 中文字符 * 2 + 其他字符 / 4
+        estimated_tokens = chinese_chars * 2 + other_chars / 4
+        
+        # 添加 10% 的緩衝
+        return int(estimated_tokens * 1.1)
     
     def chunk_text(self, text: str, mode: AnalysisMode) -> list[str]:
         """根據模式切分文本"""
